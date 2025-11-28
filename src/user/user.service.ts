@@ -1,5 +1,5 @@
 import {
-  ForbiddenException,
+  BadRequestException,
   Injectable,
   Logger,
   NotFoundException,
@@ -12,13 +12,13 @@ import * as argon2 from 'argon2';
 import { SafeUser } from '@/auth/dtos/AuthResponse.dto';
 import { PrismaService } from '@/prisma/prisma.service';
 import { AuthService } from '@/auth/auth.service';
+import { Prisma } from '@generated/client';
 
 @Injectable()
 export class UserService {
   private readonly logger = new Logger(UserService.name);
   constructor(
     private readonly prisma: PrismaService,
-    private readonly authService: AuthService,
   ) {}
 
   async findById(id: string): Promise<SafeUser | null> {
@@ -33,45 +33,62 @@ export class UserService {
     filters: UserFiltersDto,
   ) {
 
-    const where: any = {
-      deletedAt: null,
-      organizationMemberships: {
-        some: { organizationId, deletedAt: null },
+   const where: Prisma.OrganizationMemberWhereInput = {
+      organizationId,
+      isActive: true,
+      user: {
+        deletedAt: null,
       },
     };
 
-    if (filters.role) where.role = filters.role;
-
     if (filters.search) {
-      where.OR = [
-        { firstName: { contains: filters.search, mode: 'insensitive' } },
-        { lastName: { contains: filters.search, mode: 'insensitive' } },
-        { email: { contains: filters.search, mode: 'insensitive' } },
-      ];
+      where.user = {
+        ...where.user,
+        OR: [
+          { firstName: { contains: filters.search, mode: 'insensitive' } },
+          { lastName: { contains: filters.search, mode: 'insensitive' } },
+          { email: { contains: filters.search, mode: 'insensitive' } },
+        ],
+      };
     }
 
-    const page = filters.page || 1;
-    const limit = filters.limit || 10;
+    // 3. Filter by Organization Role (Not System Role)
+    if (filters.roleId) {
+      where.roleId = filters.roleId;
+    }
 
-    const [users, total] = await Promise.all([
-      this.prisma.user.findMany({
+    // 4. Execute Query
+    const [members, total] = await Promise.all([
+      this.prisma.organizationMember.findMany({
         where,
-        select: this.getSafeUserSelect(),
-        skip: (page - 1) * limit,
         take: limit,
-        orderBy: {
-          [filters.sortBy || 'createdAt']: filters.sortOrder || 'desc',
+        skip,
+        include: {
+          user: {
+            select: this.getSafeUserSelect(),
+          },
+          role: true, // Include the Role details (e.g. "Manager")
         },
+        orderBy: { joinedAt: 'desc' }, // Sort by when they joined the org
       }),
-      this.prisma.user.count({ where }),
+      this.prisma.organizationMember.count({ where }),
     ]);
 
+    // 5. Transform Output
+    const safeMembers = members.map((member) => ({
+      userId: member.user.id,
+      ...member.user, 
+      orgRole: member.role,
+      joinedAt: member.joinedAt,
+      memberId: member.id,
+    }));
+
     return {
-      users,
-      pagination: {
+      data: safeMembers,
+      meta: {
+        total,
         page,
         limit,
-        total,
         pages: Math.ceil(total / limit),
       },
     };
@@ -114,7 +131,7 @@ async changePassword(userId: string, dto: ChangePasswordDto): Promise<void> {
     }
 
     // ✅ Use AuthService method for consistency
-    this.authService.validatePasswordStrength(dto.newPassword);
+    this.validatePasswordStrength(dto.newPassword);
     const hashedPassword = await argon2.hash(dto.newPassword);
 
     // ✅ Use transaction with session revocation
@@ -186,4 +203,27 @@ async changePassword(userId: string, dto: ChangePasswordDto): Promise<void> {
       connectedAt: m.createdAt,
     }));
   }
+
+  validatePasswordStrength(password: string): void {
+      if (password.length < 8) {
+        throw new BadRequestException(
+          'Password must be at least 8 characters long',
+        );
+      }
+  
+      const strengthChecks = {
+        hasLowercase: /[a-z]/.test(password),
+        hasUppercase: /[A-Z]/.test(password),
+        hasNumbers: /\d/.test(password),
+        hasSpecialChar: /[!@#$%^&*(),.?":{}|<>]/.test(password),
+      };
+  
+      const strengthScore = Object.values(strengthChecks).filter(Boolean).length;
+  
+      if (strengthScore < 3) {
+        throw new BadRequestException(
+          'Password must contain at least 3 of the following: lowercase, uppercase, numbers, special characters',
+        );
+      }
+    }
 }

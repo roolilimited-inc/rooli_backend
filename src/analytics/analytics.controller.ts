@@ -39,68 +39,68 @@ export class AnalyticsController {
   /**
    * Generate AI-powered insights for the current user's organization
    */
-  @Get('ai-insights/generate/:organizationId')
-  @ApiOperation({ summary: 'Generate AI insights for an organization' })
-  @ApiResponse({
-    status: 200,
-    description: 'Insights generated successfully',
-    schema: {
-      example: [
-        {
-          type: 'warning',
-          title: 'Low Engagement Rate',
-          message:
-            'Your engagement rate is 1.8%. Consider creating more interactive content.',
-          confidence: 0.8,
-          data: { engagementRate: 0.018 },
-        },
-        {
-          type: 'recommendation',
-          title: 'Optimal Posting Time',
-          message: 'The best time to post is between 1-3 PM weekdays.',
-          confidence: 0.6,
-        },
-      ],
-    },
-  })
-  @ApiResponse({ status: 403, description: 'Organization access denied' })
-  async generateInsights(
-    @Param('organizationId') organizationId: string,
-    @Req() req: Request,
-  ) {
-    // You can verify access here using req.user or a guard
-    return this.aiInsightsService.generateInsights(organizationId);
-  }
+  // @Get('ai-insights/generate/:organizationId')
+  // @ApiOperation({ summary: 'Generate AI insights for an organization' })
+  // @ApiResponse({
+  //   status: 200,
+  //   description: 'Insights generated successfully',
+  //   schema: {
+  //     example: [
+  //       {
+  //         type: 'warning',
+  //         title: 'Low Engagement Rate',
+  //         message:
+  //           'Your engagement rate is 1.8%. Consider creating more interactive content.',
+  //         confidence: 0.8,
+  //         data: { engagementRate: 0.018 },
+  //       },
+  //       {
+  //         type: 'recommendation',
+  //         title: 'Optimal Posting Time',
+  //         message: 'The best time to post is between 1-3 PM weekdays.',
+  //         confidence: 0.6,
+  //       },
+  //     ],
+  //   },
+  // })
+  // @ApiResponse({ status: 403, description: 'Organization access denied' })
+  // async generateInsights(
+  //   @Param('organizationId') organizationId: string,
+  //   @Req() req: Request,
+  // ) {
+  //   // You can verify access here using req.user or a guard
+  //   return this.aiInsightsService.generateInsights(organizationId);
+  // }
 
-  @Get('summary/:organizationId')
-  @ApiOperation({ summary: 'Get analytics summary for an organization' })
-  @ApiParam({ name: 'organizationId', description: 'Organization ID' })
-  async getSummary(
-    @Param('organizationId') organizationId: string,
-    @Query() query: AnalyticsQueryDto,
-  ): Promise<AnalyticsSummary> {
-    return this.analyticsService.getOrganizationSummary(organizationId, query);
-  }
+  // @Get('summary/:organizationId')
+  // @ApiOperation({ summary: 'Get analytics summary for an organization' })
+  // @ApiParam({ name: 'organizationId', description: 'Organization ID' })
+  // async getSummary(
+  //   @Param('organizationId') organizationId: string,
+  //   @Query() query: AnalyticsQueryDto,
+  // ): Promise<AnalyticsSummary> {
+  //   return this.analyticsService.getOrganizationSummary(organizationId, query);
+  // }
 
-  @Get('platforms/:organizationId')
-  @ApiOperation({ summary: 'Get analytics summary per platform' })
-  @ApiParam({ name: 'organizationId', description: 'Organization ID' })
-  async getPlatforms(
-    @Param('organizationId') organizationId: string,
-    @Query() query: AnalyticsQueryDto,
-  ): Promise<PlatformPerformance[]> {
-    return this.analyticsService.getPlatformPerformance(organizationId, query);
-  }
+  // @Get('platforms/:organizationId')
+  // @ApiOperation({ summary: 'Get analytics summary per platform' })
+  // @ApiParam({ name: 'organizationId', description: 'Organization ID' })
+  // async getPlatforms(
+  //   @Param('organizationId') organizationId: string,
+  //   @Query() query: AnalyticsQueryDto,
+  // ): Promise<PlatformPerformance[]> {
+  //   return this.analyticsService.getPlatformPerformance(organizationId, query);
+  // }
 
-  @Get('time-series/:organizationId')
-  @ApiOperation({ summary: 'Get time series analytics for charts' })
-  @ApiParam({ name: 'organizationId', description: 'Organization ID' })
-  async getTimeSeries(
-    @Param('organizationId') organizationId: string,
-    @Query() query: AnalyticsQueryDto,
-  ): Promise<TimeSeriesData[]> {
-    return this.analyticsService.getTimeSeriesData(organizationId, query);
-  }
+  // @Get('time-series/:organizationId')
+  // @ApiOperation({ summary: 'Get time series analytics for charts' })
+  // @ApiParam({ name: 'organizationId', description: 'Organization ID' })
+  // async getTimeSeries(
+  //   @Param('organizationId') organizationId: string,
+  //   @Query() query: AnalyticsQueryDto,
+  // ): Promise<TimeSeriesData[]> {
+  //   return this.analyticsService.getTimeSeriesData(organizationId, query);
+  // }
 
   @Get('top-posts/:organizationId')
   @ApiOperation({ summary: 'Get top performing posts by metric' })
@@ -121,29 +121,29 @@ export class AnalyticsController {
     );
   }
 
-  @Get('analytics')
-  @ApiOperation({ summary: 'Export analytics report' })
-  @ApiResponse({
-    status: 200,
-    description: 'Returns the exported report as a file.',
-  })
-  async exportAnalytics(
-    @Query() query: ExportOptionsDto,
-  ): Promise<StreamableFile> {
-    const buffer = await this.exportService.generateReport(query);
+  // @Get('analytics')
+  // @ApiOperation({ summary: 'Export analytics report' })
+  // @ApiResponse({
+  //   status: 200,
+  //   description: 'Returns the exported report as a file.',
+  // })
+  // async exportAnalytics(
+  //   @Query() query: ExportOptionsDto,
+  // ): Promise<StreamableFile> {
+  //   const buffer = await this.exportService.generateReport(query);
 
-    const contentType =
-      query.format === 'pdf'
-        ? 'application/pdf'
-        : query.format === 'excel'
-          ? 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-          : 'text/csv';
+  //   const contentType =
+  //     query.format === 'pdf'
+  //       ? 'application/pdf'
+  //       : query.format === 'excel'
+  //         ? 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+  //         : 'text/csv';
 
-    const fileName = `analytics_report.${query.format}`;
+  //   const fileName = `analytics_report.${query.format}`;
 
-    return new StreamableFile(buffer, {
-      type: contentType,
-      disposition: `attachment; filename="${fileName}"`,
-    });
-  }
+  //   return new StreamableFile(buffer, {
+  //     type: contentType,
+  //     disposition: `attachment; filename="${fileName}"`,
+  //   });
+  // }
 }

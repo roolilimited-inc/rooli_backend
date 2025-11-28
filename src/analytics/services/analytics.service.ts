@@ -13,112 +13,110 @@ export class AnalyticsService {
   constructor(private readonly prisma: PrismaService) {}
 
   /** Get analytics summary for an organization */
-  async getOrganizationSummary(
-    organizationId: string,
-    query: AnalyticsQueryDto,
-  ): Promise<AnalyticsSummary> {
-    const where = this.buildWhereClause(organizationId, query);
+  // async getOrganizationSummary(
+  //   organizationId: string,
+  //   query: AnalyticsQueryDto,
+  // ): Promise<AnalyticsSummary> {
+  //   const where = this.buildWhereClause(organizationId, query);
 
-    const result = await this.prisma.postAnalytics.aggregate({
-      where,
-      _sum: {
-        likes: true,
-        comments: true,
-        shares: true,
-        impressions: true,
-        clicks: true,
-        videoViews: true,
-        saves: true,
-      },
-    });
+  //   const result = await this.prisma.postAnalyticsSnapshot.aggregate({
+  //     where,
+  //     _sum: {
+  //       likes: true,
+  //       comments: true,
+  //       shares: true,
+  //       impressions: true,
+  //       clicks: true,
+  //     },
+  //   });
 
-    const sums = this.normalizeSums(result._sum || {});
+  //   const sums = this.normalizeSums(result._sum || {});
 
-    return {
-      totalLikes: sums.likes,
-      totalComments: sums.comments,
-      totalShares: sums.shares,
-      totalImpressions: sums.impressions,
-      totalClicks: sums.clicks,
-      engagementRate: this.calculateEngagementRate(sums),
-      clickThroughRate: this.calculateClickThroughRate(sums),
-    };
-  }
+  //   return {
+  //     totalLikes: sums.likes,
+  //     totalComments: sums.comments,
+  //     totalShares: sums.shares,
+  //     totalImpressions: sums.impressions,
+  //     totalClicks: sums.clicks,
+  //     engagementRate: this.calculateEngagementRate(sums),
+  //     clickThroughRate: this.calculateClickThroughRate(sums),
+  //   };
+  // }
 
-  /** Get platform performance */
-  async getPlatformPerformance(
-    organizationId: string,
-    query: AnalyticsQueryDto,
-  ): Promise<PlatformPerformance[]> {
-    const platforms = await this.prisma.postAnalytics.groupBy({
-      by: ['platform'],
-      where: this.buildWhereClause(organizationId, query),
-      _sum: {
-        likes: true,
-        comments: true,
-        shares: true,
-        impressions: true,
-        clicks: true,
-      },
-    });
+  // /** Get platform performance */
+  // async getPlatformPerformance(
+  //   organizationId: string,
+  //   query: AnalyticsQueryDto,
+  // ): Promise<PlatformPerformance[]> {
+  //   const platforms = await this.prisma.postAnalyticsSnapshot.groupBy({
+  //     by: ['platform'],
+  //     where: this.buildWhereClause(organizationId, query),
+  //     _sum: {
+  //       likes: true,
+  //       comments: true,
+  //       shares: true,
+  //       impressions: true,
+  //       clicks: true,
+  //     },
+  //   });
 
-    const totalMetrics = await this.getOrganizationSummary(
-      organizationId,
-      query,
-    );
+  //   const totalMetrics = await this.getOrganizationSummary(
+  //     organizationId,
+  //     query,
+  //   );
 
-    return platforms.map((p) => {
-      const sums = this.normalizeSums(p._sum);
-      return {
-        platform: p.platform,
-        metrics: {
-          totalLikes: sums.likes,
-          totalComments: sums.comments,
-          totalShares: sums.shares,
-          totalImpressions: sums.impressions,
-          totalClicks: sums.clicks,
-          engagementRate: this.calculateEngagementRate(sums),
-          clickThroughRate: this.calculateClickThroughRate(sums),
-        },
-        percentageChange: this.calculatePlatformPercentage(sums, totalMetrics),
-      };
-    });
-  }
+  //   return platforms.map((p) => {
+  //     const sums = this.normalizeSums(p._sum);
+  //     return {
+  //       platform: p.platform,
+  //       metrics: {
+  //         totalLikes: sums.likes,
+  //         totalComments: sums.comments,
+  //         totalShares: sums.shares,
+  //         totalImpressions: sums.impressions,
+  //         totalClicks: sums.clicks,
+  //         engagementRate: this.calculateEngagementRate(sums),
+  //         clickThroughRate: this.calculateClickThroughRate(sums),
+  //       },
+  //       percentageChange: this.calculatePlatformPercentage(sums, totalMetrics),
+  //     };
+  //   });
+  // }
 
   /** Get time series data for charts */
-  async getTimeSeriesData(
-    organizationId: string,
-    query: AnalyticsQueryDto,
-  ): Promise<TimeSeriesData[]> {
-    const results = await this.prisma.postAnalytics.groupBy({
-      by: ['createdAt'],
-      where: this.buildWhereClause(organizationId, query),
-      _sum: {
-        likes: true,
-        comments: true,
-        shares: true,
-        impressions: true,
-        clicks: true,
-      },
-      orderBy: { createdAt: 'asc' },
-    });
+  // async getTimeSeriesData(
+  //   organizationId: string,
+  //   query: AnalyticsQueryDto,
+  // ): Promise<TimeSeriesData[]> {
+  //   const results = await this.prisma.postAnalyticsSnapshot.groupBy({
+  //     by: ['recordedAt'],
+  //     where: this.buildWhereClause(organizationId, query),
+  //     _sum: {
+  //       likes: true,
+  //       comments: true,
+  //       shares: true,
+  //       impressions: true,
+  //       clicks: true,
+  //     },
+  //     orderBy: { createdAt: 'asc' },
+  //   });
 
-    return results.map((r) => {
-      const sums = this.normalizeSums(r._sum);
-      return {
-        date: r.createdAt.toISOString().split('T')[0],
-        metrics: {
-          totalLikes: sums.likes,
-          totalComments: sums.comments,
-          totalShares: sums.shares,
-          totalImpressions: sums.impressions,
-          totalClicks: sums.clicks,
-          engagementRate: this.calculateEngagementRate(sums),
-          clickThroughRate: this.calculateClickThroughRate(sums),
-        },
-      };
-    });
-  }
+  //   return results.map((r) => {
+  //     const sums = this.normalizeSums(r._sum);
+  //     return {
+  //       date: r.createdAt.toISOString().split('T')[0],
+  //       metrics: {
+  //         totalLikes: sums.likes,
+  //         totalComments: sums.comments,
+  //         totalShares: sums.shares,
+  //         totalImpressions: sums.impressions,
+  //         totalClicks: sums.clicks,
+  //         engagementRate: this.calculateEngagementRate(sums),
+  //         clickThroughRate: this.calculateClickThroughRate(sums),
+  //       },
+  //     };
+  //   });
+  // }
 
   /** Get top posts by metric */
   async getTopPosts(
@@ -126,7 +124,7 @@ export class AnalyticsService {
     query: AnalyticsQueryDto,
     metric: keyof PostAnalyticsSums = 'likes',
   ) {
-    return this.prisma.postAnalytics.findMany({
+    return this.prisma.postAnalyticsSnapshot.findMany({
       where: this.buildWhereClause(organizationId, query),
       orderBy: { [metric]: 'desc' },
       take: query.limit,

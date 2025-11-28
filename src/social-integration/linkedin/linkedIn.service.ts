@@ -646,8 +646,7 @@ export class LinkedInService {
       // Organization-scoped account
       return this.prisma.socialAccount.upsert({
         where: {
-          organizationId_platform_platformAccountId: {
-            organizationId: state.organizationId,
+          platform_platformAccountId: {
             platform: 'LINKEDIN',
             platformAccountId: profile.id,
           },

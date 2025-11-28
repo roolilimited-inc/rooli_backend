@@ -18,23 +18,23 @@ export class AiInsightsService {
   /**
    * Generate AI-powered insights for an organization
    */
-  async generateInsights(organizationId: string): Promise<AIInsight[]> {
-    const insights: AIInsight[] = [];
+  // async generateInsights(organizationId: string): Promise<AIInsight[]> {
+  //   const insights: AIInsight[] = [];
 
-    // Get recent data for analysis
-    const summary = await this.analyticsService.getOrganizationSummary(organizationId, {
-      startDate: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString(), // Last 30 days
-    });
+  //   // Get recent data for analysis
+  //   const summary = await this.analyticsService.getOrganizationSummary(organizationId, {
+  //     startDate: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString(), // Last 30 days
+  //   });
 
-    const platformPerformance = await this.analyticsService.getPlatformPerformance(organizationId, {});
+  //   const platformPerformance = await this.analyticsService.getPlatformPerformance(organizationId, {});
 
-    // Generate insights based on data patterns
-    insights.push(...this.generatePerformanceInsights(summary));
-    insights.push(...this.generatePlatformInsights(platformPerformance));
-    insights.push(...this.generateRecommendationInsights(summary));
+  //   // Generate insights based on data patterns
+  //   insights.push(...this.generatePerformanceInsights(summary));
+  //   insights.push(...this.generatePlatformInsights(platformPerformance));
+  //   insights.push(...this.generateRecommendationInsights(summary));
 
-    return insights.sort((a, b) => b.confidence - a.confidence);
-  }
+  //   return insights.sort((a, b) => b.confidence - a.confidence);
+  // }
 
   private generatePerformanceInsights(summary: any): AIInsight[] {
     const insights: AIInsight[] = [];

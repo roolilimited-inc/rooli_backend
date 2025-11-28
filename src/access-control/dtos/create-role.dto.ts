@@ -75,4 +75,14 @@ export class CreateRoleDto {
   @Type(() => Boolean)
   @IsBoolean()
   isDefault?: boolean;
+
+    @ApiPropertyOptional({
+    description:
+      'If true, this role will be automatically assigned to the system.',
+    example: false,
+  })
+  @IsOptional()
+  @Type(() => Boolean)
+  @IsBoolean()
+  isSystem?: boolean;
 }

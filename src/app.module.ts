@@ -11,7 +11,6 @@ import { RedisModule } from './redis/redis.module';
 import { PostsModule } from './posts/posts.module';
 import { APP_GUARD } from '@nestjs/core';
 import { JwtAuthGuard } from './auth/guards/jwt-auth.guard';
-import { PermissionsModule } from './role-permissions/permissions.module';
 import { UserModule } from './user/user.module';
 import { ApprovalsModule } from './approvals/approvals.module';
 import { BillingModule } from './billing/billing.module';
@@ -107,8 +106,7 @@ import { AccessControlModule } from './access-control/access-control.module';
 
     UserModule,
 
-    PermissionsModule,
-
+    AccessControlModule,
 
     SocialSchedulerModule,
 

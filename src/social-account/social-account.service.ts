@@ -23,8 +23,7 @@ export class SocialAccountService {
     try {
       const socialAccount = await this.prisma.socialAccount.upsert({
         where: {
-          organizationId_platform_platformAccountId: {
-            organizationId,
+          platform_platformAccountId: {
             platform,
             platformAccountId,
           },

@@ -63,29 +63,6 @@ export class WebhookProcessingService {
       );
       return;
     }
-
-    await this.prisma.engagementMetric.upsert({
-      where: {
-        postId_platform_type: {
-          postId: postId,
-          platform: webhookEvent.platform,
-          type: webhookEvent.eventType.toLowerCase(),
-        },
-      },
-      update: {
-        count: { increment: 1 },
-        lastEngagementAt: new Date(),
-      },
-      create: {
-        postId: postId,
-        platform: webhookEvent.platform,
-        type: webhookEvent.eventType.toLowerCase(),
-        count: 1,
-        lastEngagementAt: new Date(),
-        socialAccountId: socialAccount.id, // ← ADD THIS
-        organizationId: socialAccount.organizationId, // ← ADD THIS
-      },
-    });
   }
 
   private async emitMessageEvent(webhookEvent: WebhookEvent): Promise<void> {

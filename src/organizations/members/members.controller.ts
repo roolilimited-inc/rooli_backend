@@ -67,24 +67,4 @@ export class MembersController {
   async leaveOrganization(@Param('orgId') orgId: string, @Req() req) {
     return this.membersService.leaveOrganization(orgId, req.user.id);
   }
-
-  @Post('transfer-ownership/:newOwnerMemberId')
-  @ApiOperation({
-    summary: 'Transfer organization ownership to another member',
-  })
-  @ApiResponse({
-    status: 200,
-    description: 'Ownership transferred successfully',
-  })
-  async transferOwnership(
-    @Param('orgId') orgId: string,
-    @Param('newOwnerMemberId') newOwnerMemberId: string,
-    @Req() req,
-  ) {
-    return this.membersService.transferOwnership(
-      orgId,
-      req.user.id,
-      newOwnerMemberId,
-    );
-  }
 }

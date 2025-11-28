@@ -136,57 +136,6 @@ export class MembersService {
     return { success: true, message: 'Successfully left organization' };
   }
 
-  async transferOwnership(
-    orgId: string,
-    currentOwnerId: string,
-    newOwnerMemberId: string,
-  ) {
-    const currentOwnerMembership = await this.getMembership(
-      orgId,
-      currentOwnerId,
-    );
-    if (!currentOwnerMembership || !this.isOwner(currentOwnerMembership)) {
-      throw new ForbiddenException(
-        'Only organization owners can transfer ownership',
-      );
-    }
-
-    const newOwnerMembership = await this.getMembership(
-      orgId,
-      undefined,
-      newOwnerMemberId,
-    );
-    if (!newOwnerMembership) {
-      throw new NotFoundException('New owner membership not found');
-    }
-
-    return this.prisma.$transaction(async (tx) => {
-      const [adminRole, ownerRole] = await Promise.all([
-        tx.role.findUnique({ where: { name: 'ADMIN' } }),
-        tx.role.findUnique({ where: { name: 'OWNER' } }),
-      ]);
-
-      if (!adminRole || !ownerRole) {
-        throw new Error('Role definitions missing');
-      }
-
-      await tx.organizationMember.update({
-        where: { id: currentOwnerMembership.id },
-        data: { roleId: adminRole.id },
-      });
-
-      await tx.organizationMember.update({
-        where: { id: newOwnerMembership.id },
-        data: { roleId: ownerRole.id },
-      });
-
-      await this.logAuditEvent(orgId, currentOwnerId, 'ownership_transferred', {
-        fromMemberId: currentOwnerMembership.id,
-        toMemberId: newOwnerMembership.id,
-      });
-    });
-  }
-
   // --- Helpers ---
 
   private async getMembership(

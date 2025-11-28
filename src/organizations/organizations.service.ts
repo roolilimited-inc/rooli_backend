@@ -41,23 +41,13 @@ export class OrganizationsService {
         },
       });
 
-      let ownerRole = await tx.role.findUnique({ where: { name: 'OWNER' } });
-      if (!ownerRole) {
-        ownerRole = await tx.role.create({
-          data: {
-            name: 'OWNER',
-            description: 'Full access to organization',
-            isSystem: true,
-          },
-        });
-      }
 
       // Add user as owner
       await tx.organizationMember.create({
         data: {
           organizationId: organization.id,
           userId: userId,
-          roleId: ownerRole.id,
+          roleId: userId,
           invitedBy: userId,
         },
       });
@@ -132,7 +122,6 @@ export class OrganizationsService {
     userId: string,
     dto: UpdateOrganizationDto,
   ) {
-    await this.verifyOwnership(orgId, userId);
 
     return this.prisma.organization.update({
       where: { id: orgId },
@@ -144,7 +133,6 @@ export class OrganizationsService {
   }
 
   async deleteOrganization(orgId: string, userId: string) {
-    await this.verifyOwnership(orgId, userId);
 
     // Soft delete organization and related data
     return this.prisma.$transaction(async (tx) => {
@@ -307,26 +295,26 @@ export class OrganizationsService {
     };
   }
 
-  private async verifyOwnership(orgId: string, userId: string) {
-    let ownerRole = await this.prisma.role.findUnique({
-      where: { name: 'OWNER' },
-    });
+  // private async verifyOwnership(orgId: string, userId: string) {
+  //   let ownerRole = await this.prisma.role.findUnique({
+  //     where: { name: 'OWNER' },
+  //   });
 
-    const membership = await this.prisma.organizationMember.findFirst({
-      where: {
-        organizationId: orgId,
-        userId: userId,
-        roleId: ownerRole.id,
-        isActive: true,
-      },
-    });
+  //   const membership = await this.prisma.organizationMember.findFirst({
+  //     where: {
+  //       organizationId: orgId,
+  //       userId: userId,
+  //       roleId: ownerRole.id,
+  //       isActive: true,
+  //     },
+  //   });
 
-    if (!membership) {
-      throw new ForbiddenException(
-        'Only organization owners can perform this action',
-      );
-    }
-  }
+  //   if (!membership) {
+  //     throw new ForbiddenException(
+  //       'Only organization owners can perform this action',
+  //     );
+  //   }
+  // }
 
   private async verifyMembership(orgId: string, userId: string) {
     const membership = await this.prisma.organizationMember.findFirst({

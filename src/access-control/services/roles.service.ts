@@ -13,7 +13,6 @@ import {
   PermissionResource,
   PermissionAction,
 } from '@generated/enums';
-import { handlePrismaError } from '@/common/prisma.utils';
 import { Prisma } from '@generated/client';
 import { RoleWithPermissions } from '../interfaces/index.interfaces';
 import { CreateRoleDto } from '../dtos/create-role.dto';
@@ -29,80 +28,77 @@ export class RoleService {
   constructor(private readonly prisma: PrismaService) {}
 
   async createRole(createRoleDto: CreateRoleDto): Promise<RoleWithPermissions> {
+    const {
+      name,
+      description,
+      displayName,
+      scope,
+      organizationId,
+      permissionIds = [],
+      isDefault = false,
+      isSystem = false,
+    } = createRoleDto;
+
+    const slug = slugify(name, { lower: true, strict: true });
+
+    // Validate organization context early
+    if (scope === RoleScope.ORGANIZATION && !organizationId && !isSystem) {
+      throw new ConflictException(
+        'Organization ID is required for organization-scoped roles',
+      );
+    }
+
+    // Ensure default role unset and role creation happen in same transaction
     try {
-      const {
-        name,
-        description,
-        displayName,
-        scope,
-        organizationId,
-        permissionIds = [],
-        isDefault = false,
-      } = createRoleDto;
+      return await this.prisma.$transaction(
+        async (tx: Prisma.TransactionClient) => {
+          // If setting as default, unset any existing default within same tx
+          if (isDefault) {
+            await this.unsetExistingDefaultRole(
+              scope,
+              organizationId || null,
+              tx,
+            );
+          }
 
-      const slug = slugify(name, {
-        lower: true,
-        strict: true,
-      });
+          const role = await tx.role.create({
+            data: {
+              name,
+              slug,
+              description,
+              displayName,
+              scope,
+              organizationId: scope === RoleScope.ORGANIZATION ? organizationId : null,
+              isDefault,
+              isSystem,
+            },
+          });
 
-      // Validate organization context
-      if (scope === RoleScope.ORGANIZATION && !organizationId) {
-        throw new ConflictException(
-          'Organization ID is required for organization-scoped roles',
-        );
-      }
+          // Assign permissions if provided (use the same tx)
+          if (permissionIds.length > 0) {
+            await this.assignPermissionsToRole(role.id, permissionIds, tx);
+          }
 
-      // Check for duplicate role name within organization/scope
-      const existingRole = await this.prisma.role.findFirst({
-        where: {
-          name,
-          scope,
-          organizationId:
-            scope === RoleScope.ORGANIZATION ? organizationId : null,
+          return this.findRoleWithPermissions(role.id, tx);
         },
-      });
-
-      if (existingRole) {
-        throw new ConflictException(
-          `Role with name "${name}" already exists in this scope`,
-        );
-      }
-
-      // If setting as default, ensure only one default role per scope/organization
-      if (isDefault) {
-        await this.unsetExistingDefaultRole(scope, organizationId);
-      }
-
-      return this.prisma.$transaction(async (tx) => {
-        // Create the role
-        const role = await tx.role.create({
-          data: {
-            name,
-            slug,
-            description,
-            displayName,
-            scope,
-            organizationId:
-              scope === RoleScope.ORGANIZATION ? organizationId : null,
-            isDefault,
-          },
-        });
-
-        // Assign permissions if provided
-        if (permissionIds.length > 0) {
-          await this.assignPermissionsToRole(role.id, permissionIds, tx);
-        }
-
-        return this.findRoleWithPermissions(role.id, tx);
-      });
+      );
     } catch (err) {
+      // Convert Prisma unique-constraint into friendly conflict
       if (
         err instanceof Prisma.PrismaClientKnownRequestError &&
         err.code === 'P2002'
       ) {
-        handlePrismaError(err);
-        throw err;
+        // optional: log details
+        this.logger.warn('Role uniqueness violation on create', {
+          name,
+          scope,
+          organizationId,
+        });
+        throw new ConflictException(
+          `Role with name "${name}" already exists in this scope`,
+        );
       }
+      throw err;
     }
   }
 
@@ -110,31 +106,27 @@ export class RoleService {
     roleId: string,
     tx?: Prisma.TransactionClient,
   ): Promise<RoleWithPermissions> {
-    try {
-      const prisma = tx || this.prisma;
+    const prisma = (tx as Prisma.TransactionClient) || this.prisma;
 
-      const role = await prisma.role.findUnique({
-        where: { id: roleId },
-        include: {
-          permissions: {
-            include: {
-              permission: true,
-            },
+    const role = await prisma.role.findUnique({
+      where: { id: roleId },
+      include: {
+        permissions: {
+          include: {
+            permission: true,
           },
         },
-      });
+      },
+    });
 
-      if (!role) {
-        throw new NotFoundException(`Role with ID ${roleId} not found`);
-      }
-
-      return {
-        ...role,
-        permissions: role.permissions.map((rp) => rp.permission),
-      };
-    } catch (err) {
-      throw err;
+    if (!role) {
+      throw new NotFoundException(`Role with ID ${roleId} not found`);
     }
+
+    return {
+      ...role,
+      permissions: role.permissions.map((rp) => rp.permission),
+    };
   }
 
   async updateRole(
@@ -174,31 +166,40 @@ export class RoleService {
       }
     }
 
-    // Handle default role setting
-    if (isDefault && !existingRole.isDefault) {
-      await this.unsetExistingDefaultRole(
-        existingRole.scope,
-        existingRole.organizationId,
-      );
-    }
+    return this.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+      // Handle default role setting
+      if (isDefault && !existingRole.isDefault) {
+        await this.unsetExistingDefaultRole(
+          existingRole.scope,
+          existingRole.organizationId,
+          tx,
+        );
+      }
 
-    return this.prisma.$transaction(async (tx) => {
+      // prepare update payload and slug if name changed
+      const updateData: any = {
+        ...(description !== undefined && { description }),
+        ...(displayName !== undefined && { displayName }),
+        ...(isDefault !== undefined && { isDefault }),
+      };
+
+      if (name && name !== existingRole.name) {
+        updateData.name = name;
+        updateData.slug = slugify(name, { lower: true, strict: true });
+      }
+
       // Update role
       await tx.role.update({
         where: { id: roleId },
-        data: {
-          ...(name && { name }),
-          ...(description && { description }),
-          ...(displayName && { displayName }),
-          ...(isDefault !== undefined && { isDefault }),
-        },
+        data: updateData,
       });
 
-      // Update permissions if provided
+      // Update permissions if provided (use same tx)
       if (permissionIds) {
         await this.setRolePermissions(roleId, permissionIds, tx);
       }
 
+      // Return fully populated role (including permissions) using same tx
       return this.findRoleWithPermissions(roleId, tx);
     });
   }
@@ -206,7 +207,7 @@ export class RoleService {
   async assignPermissionsToRole(
     roleId: string,
     permissionIds: string[],
-    tx?: any,
+    tx?: Prisma.TransactionClient,
   ): Promise<void> {
     const prisma = tx || this.prisma;
 
@@ -215,7 +216,7 @@ export class RoleService {
       throw new NotFoundException(`Role with ID ${roleId} not found`);
     }
 
-    // Verify all permissions exist and match role scope
+    // Load permissions and validate existence
     const permissions = await prisma.permission.findMany({
       where: { id: { in: permissionIds } },
     });
@@ -224,15 +225,17 @@ export class RoleService {
       throw new NotFoundException('One or more permissions not found');
     }
 
-    // Check scope compatibility
-    const invalidScope = permissions.find((p) => p.scope !== role.scope);
-    if (invalidScope) {
+    // Check scope compatibility using helper to avoid enum mismatch
+    const invalid = permissions.find(
+      (p) => !this.permissionScopeMatchesRole(role.scope, p.scope),
+    );
+    if (invalid) {
       throw new ConflictException(
-        `Permission scope ${invalidScope.scope} does not match role scope ${role.scope}`,
+        `Permission scope ${invalid.scope} does not match role scope ${role.scope}`,
       );
     }
 
-    // Create role-permission relationships
+    // Create role-permission relationships in bulk (skip duplicates)
     await prisma.rolePermission.createMany({
       data: permissionIds.map((permissionId) => ({
         roleId,
@@ -245,7 +248,7 @@ export class RoleService {
   async setRolePermissions(
     roleId: string,
     permissionIds: string[],
-    tx?: any,
+    tx?: Prisma.TransactionClient,
   ): Promise<void> {
     const prisma = tx || this.prisma;
 
@@ -261,10 +264,7 @@ export class RoleService {
   async deleteRole(roleId: string): Promise<void> {
     const role = await this.prisma.role.findUnique({
       where: { id: roleId },
-      include: {
-        organizationMembers: true,
-        socialAccountMembers: true,
-      },
+      select: { id: true, isSystem: true },
     });
 
     if (!role) {
@@ -287,16 +287,9 @@ export class RoleService {
       );
     }
 
-    await this.prisma.$transaction(async (tx) => {
-      // Remove all permissions
-      await tx.rolePermission.deleteMany({
-        where: { roleId },
-      });
-
-      // Delete the role
-      await tx.role.delete({
-        where: { id: roleId },
-      });
+    await this.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+      await tx.rolePermission.deleteMany({ where: { roleId } });
+      await tx.role.delete({ where: { id: roleId } });
     });
   }
 
@@ -380,11 +373,13 @@ export class RoleService {
       permissions: role.permissions.map((rp) => rp.permission),
     };
   }
-
   private async unsetExistingDefaultRole(
     scope: RoleScope,
-    organizationId?: string,
+    organizationId?: string | null,
+    tx?: Prisma.TransactionClient,
   ): Promise<void> {
+    const prisma = tx || this.prisma;
+
     const where: any = {
       scope,
       isDefault: true,
@@ -396,105 +391,26 @@ export class RoleService {
       where.organizationId = null;
     }
 
-    await this.prisma.role.updateMany({
+    await prisma.role.updateMany({
       where,
       data: { isDefault: false },
     });
   }
 
-  async seedSystemRoles(): Promise<void> {
-    const systemRoles = [
-      // Organization roles
-      {
-        name: 'owner',
-        displayName: 'Owner',
-        description: 'Full organization ownership with all permissions',
-        scope: RoleScope.ORGANIZATION,
-        isSystem: true,
-        permissions: ['ORGANIZATION:ORGANIZATION:MANAGE'],
-      },
-      {
-        name: 'admin',
-        displayName: 'Admin',
-        description: 'Organization administrator with management permissions',
-        scope: RoleScope.ORGANIZATION,
-        isSystem: true,
-        permissions: [
-          'ORGANIZATION:MEMBERS:MANAGE',
-          'ORGANIZATION:SETTINGS:MANAGE',
-        ],
-      },
-      {
-        name: 'member',
-        displayName: 'Member',
-        description: 'Standard organization member',
-        scope: RoleScope.ORGANIZATION,
-        isSystem: true,
-        isDefault: true,
-        permissions: ['ORGANIZATION:MEMBERS:READ'],
-      },
-
-      // Social Account roles
-      {
-        name: 'manager',
-        displayName: 'Social Manager',
-        description: 'Full social account management',
-        scope: RoleScope.SOCIAL_ACCOUNT,
-        isSystem: true,
-        permissions: [
-          'SOCIAL_ACCOUNT:POSTS:CREATE',
-          'SOCIAL_ACCOUNT:SCHEDULING:MANAGE',
-        ],
-      },
-      {
-        name: 'contributor',
-        displayName: 'Contributor',
-        description: 'Can create and schedule content',
-        scope: RoleScope.SOCIAL_ACCOUNT,
-        isSystem: true,
-        isDefault: true,
-        permissions: [
-          'SOCIAL_ACCOUNT:POSTS:CREATE',
-          'SOCIAL_ACCOUNT:SCHEDULING:MANAGE',
-        ],
-      },
-    ];
-
-    for (const roleData of systemRoles) {
-      try {
-        // Find or create permissions first
-        const permissionIds = [];
-        for (const permString of roleData.permissions) {
-          const [scope, resource, action] = permString.split(':');
-          const permission = await this.prisma.permission.findFirst({
-            where: {
-              scope: scope as PermissionScope,
-              resource: resource as PermissionResource,
-              action: action as PermissionAction,
-            },
-          });
-          if (permission) {
-            permissionIds.push(permission.id);
-          }
-        }
-
-        await this.createRole({
-          name: roleData.name,
-          displayName: roleData.displayName,
-          description: roleData.description,
-          scope: roleData.scope,
-          isDefault: roleData.isDefault,
-          permissionIds,
-        });
-      } catch (error) {
-        if (error instanceof ConflictException) {
-          this.logger.log(`Role already exists: ${roleData.name}`);
-          continue;
-        }
-        throw error;
-      }
-    }
-
-    this.logger.log('System roles seeded successfully');
+  private permissionScopeMatchesRole(
+    roleScope: RoleScope,
+    permScope: PermissionScope,
+  ): boolean {
+    if (
+      roleScope === RoleScope.ORGANIZATION &&
+      permScope === PermissionScope.ORGANIZATION
+    )
+      return true;
+    if (
+      roleScope === RoleScope.SOCIAL_ACCOUNT &&
+      permScope === PermissionScope.SOCIAL_ACCOUNT
+    )
+      return true;
+    return false;
   }
 }

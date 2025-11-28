@@ -1,6 +1,6 @@
 generator client {
   provider = "prisma-client"
-  output   = "../generated/prisma/client"
+  output   = "../generated/prisma"
 }
 
 datasource db {
@@ -90,10 +90,10 @@ model SocialAccount {
   lastPostedAt DateTime?
   metadata     Json?
 
-  organization     Organization?          @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  posts            Post[]
-  rateLimitLogs    PlatformRateLimitLog[]
-  members          SocialAccountMember[]
+  organization  Organization?          @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  posts         Post[]
+  rateLimitLogs PlatformRateLimitLog[]
+  members       SocialAccountMember[]
 
   accountType   SocialAccountType    @default(PAGE)
   notifications NotificationEntity[]
@@ -107,20 +107,20 @@ model SocialAccount {
 }
 
 model SocialAccountMember {
-  id              String   @id @default(cuid())
+  id              String  @id @default(cuid())
   socialAccountId String
   userId          String
   invitedById     String?
   roleId          String?
-  isActive        Boolean  @default(true)
+  isActive        Boolean @default(true)
 
   // Relations
   socialAccount SocialAccount @relation(fields: [socialAccountId], references: [id], onDelete: Cascade)
-  role          Role?          @relation(fields: [roleId], references: [id])
+  role          Role?         @relation(fields: [roleId], references: [id])
   user          User          @relation("SocialAccountMemberships", fields: [userId], references: [id], onDelete: Cascade)
-  invitedBy       User?         @relation("SocialAccountInvitations", fields: [invitedById], references: [id], onDelete: SetNull)
+  invitedBy     User?         @relation("SocialAccountInvitations", fields: [invitedById], references: [id], onDelete: SetNull)
 
-   createdAt DateTime @default(now())
+  createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@unique([socialAccountId, userId])
@@ -179,14 +179,14 @@ model Post {
   // Platform metadata
   platformPostId String? // ID returned by platform after publishing
 
-  parentPostId String?  // Points to the previous tweet in the thread
-  parentPost   Post?    @relation("PostThread", fields: [parentPostId], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  childPosts   Post[]   @relation("PostThread")
+  parentPostId String? // Points to the previous tweet in the thread
+  parentPost   Post?   @relation("PostThread", fields: [parentPostId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  childPosts   Post[]  @relation("PostThread")
 
   // RELATIONS
-  author        User?           @relation(fields: [authorId], references: [id], onDelete: Cascade)
-  socialAccount SocialAccount   @relation(fields: [socialAccountId], references: [id], onDelete: Cascade)
-  pageAccount   PageAccount?    @relation(fields: [pageAccountId], references: [id], onDelete: Cascade)
+  author        User?                   @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  socialAccount SocialAccount           @relation(fields: [socialAccountId], references: [id], onDelete: Cascade)
+  pageAccount   PageAccount?            @relation(fields: [pageAccountId], references: [id], onDelete: Cascade)
   approvals     PostApproval[]
   analytics     PostAnalyticsSnapshot[]
 
@@ -245,18 +245,18 @@ model PublishingMetric {
 }
 
 model MediaFolder {
-  id             String   @id @default(cuid())
+  id             String  @id @default(cuid())
   name           String
   organizationId String
   parentId       String?
-  
-  organization   Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  parent         MediaFolder?  @relation("FolderHierarchy", fields: [parentId], references: [id], onDelete: NoAction)
-  children       MediaFolder[] @relation("FolderHierarchy")
-  files          MediaFile[]  
-  
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+
+  organization Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  parent       MediaFolder?  @relation("FolderHierarchy", fields: [parentId], references: [id], onDelete: NoAction)
+  children     MediaFolder[] @relation("FolderHierarchy")
+  files        MediaFile[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@unique([organizationId, parentId, name])
   @@index([organizationId])
@@ -286,7 +286,7 @@ model MediaFile {
   aiGenerationId      String?
   posts               Post[]
 
-  folder         MediaFolder?      @relation(fields: [folderId], references: [id], onDelete: SetNull)
+  folder MediaFolder? @relation(fields: [folderId], references: [id], onDelete: SetNull)
 
   // Relation field (many media files -> one generation)
   aiImageGeneration AiImageGeneration? @relation(fields: [aiGenerationId], references: [id], onDelete: SetNull)
@@ -329,9 +329,9 @@ model Organization {
   subscription       Subscription?
   creditTransactions CreditTransaction[]
 
-  brandKit         BrandKit[]
-  mediaFolders     MediaFolder[]
-  roles          Role[]
+  brandKit     BrandKit[]
+  mediaFolders MediaFolder[]
+  roles        Role[]
 
   // billing and limits
   monthlyCreditLimit Int?    @default(1000) // NULL = unlimited for enterprise
@@ -626,21 +626,21 @@ model PlatformRateLimitLog {
 // ========================
 
 model PostAnalyticsSnapshot {
-  id          String   @id @default(cuid())
-  postId      String
- 
-  recordedAt  DateTime @default(now()) 
-  
-  likes       Int      @default(0)
-  comments    Int      @default(0)
-  shares      Int      @default(0)
-  impressions Int      @default(0)
-  reach       Int      @default(0)
-  clicks      Int      @default(0)
-  
-  post        Post     @relation(fields: [postId], references: [id], onDelete: Cascade)
+  id     String @id @default(cuid())
+  postId String
 
-  @@index([postId, recordedAt]) 
+  recordedAt DateTime @default(now())
+
+  likes       Int @default(0)
+  comments    Int @default(0)
+  shares      Int @default(0)
+  impressions Int @default(0)
+  reach       Int @default(0)
+  clicks      Int @default(0)
+
+  post Post @relation(fields: [postId], references: [id], onDelete: Cascade)
+
+  @@index([postId, recordedAt])
 }
 
 // ========================
@@ -921,7 +921,6 @@ enum SocialAccountRole {
   ANALYST
 }
 
-
 enum SocialAccountType {
   PAGE
   PROFILE
@@ -929,14 +928,14 @@ enum SocialAccountType {
 
 model Permission {
   id          String             @id @default(cuid())
-  name        String 
+  name        String
   description String?
   scope       PermissionScope
   resource    PermissionResource
   action      PermissionAction
 
-  createdAt   DateTime           @default(now())
-  updatedAt   DateTime           @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   // Relations
   rolePermissions RolePermission[]
@@ -946,26 +945,26 @@ model Permission {
 }
 
 model Role {
-  id          String   @id @default(cuid())
-  name        String 
-  slug        String?
-  description String?
-  isSystem    Boolean  @default(false) // System roles cannot be deleted
-  isDefault   Boolean  @default(false) // Default role for new members
+  id             String    @id @default(cuid())
+  name           String
+  slug           String?
+  description    String?
+  isSystem       Boolean   @default(false) // System roles cannot be deleted
+  isDefault      Boolean   @default(false) // Default role for new members
   organizationId String?
   displayName    String
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-  scope RoleScope
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  scope          RoleScope
 
   // Relations
-  organization Organization?     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  organization         Organization?         @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   permissions          RolePermission[]
   organizationMembers  OrganizationMember[]
   socialAccountMembers SocialAccountMember[]
 
-  @@index([isSystem, isDefault])
   @@unique([scope, organizationId, name])
+  @@index([isSystem, isDefault])
 }
 
 model RolePermission {
@@ -1001,7 +1000,7 @@ enum RoleScope {
 enum QueueStatus {
   PENDING
   QUEUED
-  PROCESSING
+  PROCESSING         
   COMPLETED
   FAILED
   RETRYING
@@ -1209,7 +1208,6 @@ enum PermissionResource {
   SETTINGS
   SUBSCRIPTION
   INTEGRATION
-
 
   // Social media resources
   POSTS

@@ -54,10 +54,10 @@ export class TwitterService {
 
   // Step 1: Generate auth link (request token)
   async startAuth() {
-    console.log(this.apiKey, this.apiSecret, this.redirectUri)
-    const url =  this.redirectUri;
+    console.log(this.apiKey, this.apiSecret, this.redirectUri);
+    const url = this.redirectUri;
     const authLink = await this.client.generateAuthLink(url);
- console.log(authLink)
+    console.log(authLink);
     // save authLink.oauth_token_secret in Redis with key authLink.oauth_token
     await this.redisService.set(
       `twitter:oauth:${authLink.oauth_token}`,
@@ -87,7 +87,7 @@ export class TwitterService {
 
     return await tempClient.login(oauthVerifier);
   }
- 
+
   //  * Handle callback from Twitter, exchange code for tokens, upsert SocialAccount.
   //  */
   // async handleOAuthCallback(
@@ -305,8 +305,7 @@ export class TwitterService {
     if (state.organizationId) {
       return this.prisma.socialAccount.upsert({
         where: {
-          organizationId_platform_platformAccountId: {
-            organizationId: state.organizationId,
+          platform_platformAccountId: {
             platform: Platform.X,
             platformAccountId: profile.id,
           },

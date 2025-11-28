@@ -44,43 +44,67 @@ export class PostsService {
   /**
    * Create a new post
    */
-  async createPost(organizationId: string, userId: string, dto: CreatePostDto) {
-    return this.prisma.$transaction(async (tx) => {
-      // 1. Validate inputs and access
-      await this.validatePostCreation(organizationId, userId, dto);
+async createPost(organizationId: string, userId: string, dto: CreatePostDto) {
+  return this.prisma.$transaction(async (tx) => {
+    // 1. Validate inputs and access (your existing validation)
+    await this.validatePostCreation(organizationId, userId, dto);
 
-      const mediaFileIds = dto.mediaFileIds || [];
-
-        // 2. Determine if this is a profile post or page post
-    const isProfilePost = !dto.pageAccountId;
-
-      // 2. Always create as DRAFT initially
-      const post = await tx.post.create({
-        data: {
+    // 1b. Optionally validate that the mediaFileIds exist and belong to the organization
+    const mediaFileIds = dto.mediaFileIds ?? [];
+    if (mediaFileIds.length > 0) {
+      const found = await tx.mediaFile.findMany({
+        where: {
+          id: { in: mediaFileIds },
           organizationId,
-          authorId: userId,
-          socialAccountId: dto.socialAccountId,
-          pageAccountId: dto.pageAccountId || null,
-          content: dto.content,
-          mediaFileIds,
-          status: PostStatus.DRAFT,
-          timezone: dto.timezone,
-          scheduledAt: dto.scheduledAt,
-          platform: dto.platform,
-          metadata: {
-            postType: isProfilePost ? 'PROFILE' : 'PAGE',
-            contentType: dto.contentType,
-            ...dto.metadata,
-          } as Prisma.JsonValue,
         },
-        include: this.getPostIncludes(),
+        select: { id: true },
       });
 
-      this.logger.log(`💾 Post ${post.id} created as draft`);
+      const foundIds = new Set(found.map((m) => m.id));
+      const missing = mediaFileIds.filter((id) => !foundIds.has(id));
+      if (missing.length > 0) {
+        throw new BadRequestException(`Media files not found or not in organization: ${missing.join(',')}`);
+      }
+    }
 
-      return post;
+    // 2. Determine if this is a profile post or page post
+    const isProfilePost = !dto.pageAccountId;
+
+    // 3. Build nested connect object for media relation (only when present)
+    const mediaRelation =
+      mediaFileIds.length > 0
+        ? { connect: mediaFileIds.map((id) => ({ id })) }
+        : undefined;
+
+    // 4. Create post as DRAFT
+    const post = await tx.post.create({
+      data: {
+        organizationId,
+        authorId: userId,
+        socialAccountId: dto.socialAccountId,
+        pageAccountId: dto.pageAccountId ?? null,
+        content: dto.content,
+        // Use nested connect for the relation field (Prisma expects an object)
+        ...(mediaRelation ? { mediaFileIds: mediaRelation } : {}),
+        status: PostStatus.DRAFT,
+        timezone: dto.timezone,
+        scheduledAt: dto.scheduledAt ?? null,
+        platform: dto.platform,
+        // extra metadata helper:
+        // ensure postType/contentType are set inside metadata
+        metadata: {
+          ...(dto.metadata || {}),
+          postType: isProfilePost ? 'PROFILE' : 'PAGE',
+        } as Prisma.JsonValue,
+      },
+      include: this.getPostIncludes(),
     });
-  }
+
+    this.logger.log(`💾 Post ${post.id} created as draft`);
+
+    return post;
+  });
+}
   /**
    * Submit a draft post for approval workflow
    */
@@ -199,47 +223,67 @@ export class PostsService {
   /**
    * Update a post (only drafts or failed posts)
    */
-  async updatePost(postId: string, organizationId: string, dto: UpdatePostDto) {
-    const post = await this.prisma.post.findFirst({
-      where: { id: postId, organizationId },
-    });
+async updatePost(postId: string, organizationId: string, dto: UpdatePostDto) {
+  // fetch post and include media relation so TS knows about it
+  const post = await this.prisma.post.findFirst({
+    where: { id: postId, organizationId },
+    include: {
+      mediaFileIds: { select: { id: true } }, // include relation to access existing media ids
+    },
+  });
 
-    if (!post) throw new NotFoundException('Post not found');
+  if (!post) throw new NotFoundException('Post not found');
 
-    const EDITABLE_STATUSES: PostStatus[] = [
-      PostStatus.DRAFT,
-      PostStatus.FAILED,
-      PostStatus.PENDING_APPROVAL,
-    ];
+  const EDITABLE_STATUSES: PostStatus[] = [
+    PostStatus.DRAFT,
+    PostStatus.FAILED,
+    PostStatus.PENDING_APPROVAL,
+  ];
 
-    if (!EDITABLE_STATUSES.includes(post.status)) {
-      throw new BadRequestException(
-        `Cannot update post with status ${post.status}`,
-      );
+  if (!EDITABLE_STATUSES.includes(post.status)) {
+    throw new BadRequestException(`Cannot update post with status ${post.status}`);
+  }
+
+  // scheduledAt validation
+  if (dto.scheduledAt) {
+    const scheduled = new Date(dto.scheduledAt);
+    if (isNaN(scheduled.getTime())) {
+      throw new BadRequestException('Invalid scheduledAt date');
     }
-
-    if (dto.scheduledAt && new Date(dto.scheduledAt) <= new Date()) {
+    if (scheduled <= new Date()) {
       throw new BadRequestException('Scheduled time must be in the future');
     }
-
-    if (dto.mediaFileIds?.length) {
-      await this.validateMediaFiles(dto.mediaFileIds, organizationId);
-    }
-
-    const updated = await this.prisma.post.update({
-      where: { id: postId },
-      data: {
-        content: dto.content ?? post.content,
-        mediaFileIds: dto.mediaFileIds ?? post.mediaFileIds,
-        scheduledAt: dto.scheduledAt ?? post.scheduledAt,
-        updatedAt: new Date(),
-      },
-      include: this.getPostIncludes(),
-    });
-
-    this.logger.log(`📝 Post ${postId} updated successfully`);
-    return updated;
   }
+
+  // validate media files if provided
+  if (dto.mediaFileIds?.length) {
+    await this.validateMediaFiles(dto.mediaFileIds, organizationId);
+  }
+
+  // build update payload
+  const updateData: Prisma.PostUpdateInput = {
+    content: dto.content ?? undefined,
+    scheduledAt: dto.scheduledAt ?? undefined,
+    updatedAt: new Date(), 
+  };
+
+  if (dto.mediaFileIds) {
+    updateData.mediaFileIds = {
+      set: dto.mediaFileIds.map((id) => ({ id })),
+    };
+  }
+
+  // perform update and return requested includes
+  const updated = await this.prisma.post.update({
+    where: { id: postId },
+    data: updateData,
+    include: this.getPostIncludes(),
+  });
+
+  this.logger.log(`📝 Post ${postId} updated successfully`);
+  return updated;
+}
+
 
   // ========== ORCHESTRATION METHODS ==========
  
