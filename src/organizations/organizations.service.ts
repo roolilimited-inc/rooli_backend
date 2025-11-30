@@ -17,51 +17,65 @@ export class OrganizationsService {
   constructor(private readonly prisma: PrismaService) {}
 
   async createOrganization(userId: string, dto: CreateOrganizationDto) {
-    // Check if slug is available
-    const existing = await this.prisma.organization.findUnique({
-      where: { slug: dto.slug },
-    });
+    try {
+      // Check if slug is available
+      const existing = await this.prisma.organization.findUnique({
+        where: { slug: dto.slug },
+      });
 
-    if (existing) {
-      throw new ConflictException('Organization slug already exists');
+      if (existing) {
+        throw new ConflictException('Organization slug already exists');
+      }
+
+      // Create organization and make user the owner
+      return await this.prisma.$transaction(async (tx) => {
+        const organization = await tx.organization.create({
+          data: {
+            name: dto.name,
+            slug: dto.slug,
+            timezone: dto.timezone || 'UTC',
+            email: dto.email,
+            planTier: 'FREE',
+            planStatus: 'ACTIVE',
+            maxMembers: 5, // Default limit
+            monthlyCreditLimit: 1000, // Default credits
+          },
+        });
+
+        const ownerRole = await tx.role.findFirst({
+          where: { name: 'owner' },
+        });
+
+        if (!ownerRole) {
+          throw new Error(
+            "Role 'owner' does not exist. Seed your roles table first.",
+          );
+        }
+
+        // Add user as owner
+        await tx.organizationMember.create({
+          data: {
+            organizationId: organization.id,
+            userId: userId,
+            roleId: ownerRole.id,
+            invitedBy: userId,
+          },
+        });
+
+        // Create default brand kit
+        await tx.brandKit.create({
+          data: {
+            organizationId: organization.id,
+            name: 'Our Brand',
+          },
+        });
+
+        return organization;
+      });
+    } catch (err) {
+      console.log(err);
+      throw err;
     }
-
-    // Create organization and make user the owner
-    return this.prisma.$transaction(async (tx) => {
-      const organization = await tx.organization.create({
-        data: {
-          name: dto.name,
-          slug: dto.slug,
-          timezone: dto.timezone || 'UTC',
-          email: dto.email,
-          planTier: 'FREE',
-          planStatus: 'ACTIVE',
-          maxMembers: 5, // Default limit
-          monthlyCreditLimit: 1000, // Default credits
-        },
-      });
-
-
-      // Add user as owner
-      await tx.organizationMember.create({
-        data: {
-          organizationId: organization.id,
-          userId: userId,
-          roleId: userId,
-          invitedBy: userId,
-        },
-      });
-
-      // Create default brand kit
-      await tx.brandKit.create({
-        data: {
-          organizationId: organization.id,
-          name: 'Our Brand',
-        },
-      });
-
-      return organization;
-    });
   }
 
   async getOrganization(orgId: string) {
@@ -122,7 +136,6 @@ export class OrganizationsService {
     userId: string,
     dto: UpdateOrganizationDto,
   ) {
-
     return this.prisma.organization.update({
       where: { id: orgId },
       data: {
@@ -133,7 +146,6 @@ export class OrganizationsService {
   }
 
   async deleteOrganization(orgId: string, userId: string) {
-
     // Soft delete organization and related data
     return this.prisma.$transaction(async (tx) => {
       // Deactivate organization
