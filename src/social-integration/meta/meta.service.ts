@@ -118,8 +118,9 @@ export class MetaService {
         name: userProfile.name,
         profileImage: userProfile.profilePicture,
         accessToken: encryptedAccessToken,
-        tokenExpiresAt: tokenExpiresAt ? tokenExpiresAt.toISOString() : null,
+        tokenExpiresAt: tokenExpiresAt ? tokenExpiresAt : null,
         scopes: debugToken.scopes || [],
+        connectedBy: userId,
         metadata: {
           email: userProfile.email,
           profilePicture: userProfile.profilePicture,

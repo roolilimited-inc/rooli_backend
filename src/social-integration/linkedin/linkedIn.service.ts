@@ -702,6 +702,7 @@ export class LinkedInService {
       username,
       name: displayName,
       displayName,
+      connectedBy:{ connect: { id: state.userId }},
       profileImage:
         profile.profileImage || profile.raw?.profilePicture?.displayImage,
       accessToken: encryptedAccessToken,
