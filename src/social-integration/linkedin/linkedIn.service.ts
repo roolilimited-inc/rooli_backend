@@ -4,6 +4,7 @@ import {
   Injectable,
   InternalServerErrorException,
   Logger,
+  NotFoundException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { firstValueFrom } from 'rxjs';
@@ -110,51 +111,6 @@ export class LinkedInService {
         stack: error?.stack,
       });
       throw error;
-    }
-  }
-
-  private async requestTokenRefresh(
-    refreshToken: string,
-  ): Promise<TokenResponse> {
-    const url = `${LINKEDIN_CONSTANTS.AUTH_URL}/accessToken`;
-    const params = new URLSearchParams({
-      grant_type: 'refresh_token',
-      refresh_token: refreshToken,
-      client_id: this.clientId,
-      client_secret: this.clientSecret,
-    });
-
-    try {
-      const response: AxiosResponse<TokenResponse> = await firstValueFrom(
-        this.httpService.post(url, params.toString(), {
-          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-          timeout: LINKEDIN_CONSTANTS.TOKEN_REQUEST_TIMEOUT_MS,
-        }),
-      );
-
-      const data = response.data;
-
-      if (!data?.access_token) {
-        this.logger.error('LinkedIn refresh response missing access_token', {
-          hasData: !!data,
-        });
-        throw new Error('No access token received during refresh');
-      }
-
-      this.logger.debug('LinkedIn token refreshed successfully', {
-        expiresIn: data.expires_in,
-        hasRefreshToken: !!data.refresh_token,
-      });
-
-      return data;
-    } catch (error) {
-      this.logger.error('LinkedIn token refresh failed', {
-        error: error?.response?.data || error?.message,
-        status: error?.response?.status,
-      });
-      throw new InternalServerErrorException(
-        'Failed to refresh LinkedIn access token',
-      );
     }
   }
 
@@ -337,7 +293,7 @@ export class LinkedInService {
         vanityName: page.vanityName,
         role: page.role,
         connectedAt: new Date(),
-      }
+      },
     };
 
     return this.prisma.pageAccount.upsert({
@@ -587,6 +543,123 @@ export class LinkedInService {
     }
   }
 
+   async requestTokenRefresh(
+    socialAccountId: string,
+  ){
+    const socialAccount = await this.prisma.socialAccount.findUnique({
+      where: { id: socialAccountId },
+    });
+
+    if (!socialAccount) {
+      throw new NotFoundException('Social account not found');
+    }
+
+    const encryptedRefreshToken = socialAccount.refreshToken;
+    if (!encryptedRefreshToken) {
+      throw new BadRequestException(
+        'No refresh token available for this account',
+      );
+    }
+
+    let refreshToken: string;
+    try {
+      refreshToken = await this.encryptionService.decrypt(
+        encryptedRefreshToken,
+      );
+    } catch (err) {
+      this.logger.error('Failed to decrypt LinkedIn refresh token', {
+        err: err?.message ?? err,
+      });
+      throw new InternalServerErrorException('Failed to decrypt refresh token');
+    }
+
+    const url = `${LINKEDIN_CONSTANTS.AUTH_URL}/accessToken`;
+    const params = new URLSearchParams({
+      grant_type: 'refresh_token',
+      refresh_token: refreshToken,
+      client_id: this.clientId,
+      client_secret: this.clientSecret,
+    });
+
+    const httpsAgent = new https.Agent({
+      family: 4,
+      keepAlive: true,
+      timeout: 30_000,
+    });
+
+    try {
+      const response: AxiosResponse<TokenResponse> = await firstValueFrom(
+        this.httpService.post(url, params.toString(), {
+          headers: {
+            'Content-Type': 'application/x-www-form-urlencoded',
+            Accept: 'application/json',
+            'X-Restli-Protocol-Version':
+              LINKEDIN_CONSTANTS.RESTLI_PROTOCOL_VERSION,
+          },
+          httpsAgent,
+          timeout: LINKEDIN_CONSTANTS.TOKEN_REQUEST_TIMEOUT_MS,
+        }),
+      );
+
+      const data = response.data;
+
+      if (!data?.access_token) {
+        this.logger.error('LinkedIn refresh response missing access_token', {
+          hasData: !!data,
+          data,
+        });
+        throw new InternalServerErrorException(
+          'No access token received during refresh',
+        );
+      }
+
+      // Encrypt new tokens
+      const encryptedAccessToken = await this.encryptionService.encrypt(
+        data.access_token,
+      );
+      const encryptedNewRefreshToken = data.refresh_token
+        ? await this.encryptionService.encrypt(data.refresh_token)
+        : undefined;
+
+      const tokenExpiresAt = data.expires_in
+        ? this.secondsToUTCDate(data.expires_in)
+        : null;
+
+      const refreshTokenExpiresAt = data.refresh_token_expires_in
+        ? this.secondsToUTCDate(data.refresh_token_expires_in)
+        : null;
+
+      await this.prisma.socialAccount.update({
+        where: { id: socialAccountId },
+        data: {
+          accessToken: encryptedAccessToken,
+          refreshToken: encryptedNewRefreshToken,
+          tokenExpiresAt,
+          refreshTokenExpiresAt,
+
+          updatedAt: new Date(),
+        },
+      });
+
+      this.logger.debug('LinkedIn token refreshed successfully', {
+        socialAccountId,
+        expiresIn: data.expires_in,
+        hasRefreshToken: !!data.refresh_token,
+      });
+
+      return {
+        message: "Access token gotten successfully"
+      };
+    } catch (error) {
+      this.logger.error('LinkedIn token refresh failed', {
+        error,
+      });
+      throw new InternalServerErrorException(
+        'Failed to refresh LinkedIn access token',
+      );
+    }
+  }
+
   // ==================== DATABASE OPERATIONS ====================
   private async upsertSocialAccount(
     profile: LinkedInProfile,
@@ -594,13 +667,12 @@ export class LinkedInService {
     state: LinkedInOAuthState,
     accountType: 'PAGE' | 'PROFILE',
   ) {
-    
     const tokenExpiresAt = tokenData.expires_in
-      ? new Date(Date.now() + tokenData.expires_in * 1000)
+      ? this.secondsToUTCDate(tokenData.expires_in)
       : null;
 
     const refreshTokenExpiresAt = tokenData.refresh_token_expires_in
-      ? new Date(Date.now() + tokenData.refresh_token_expires_in * 1000)
+      ? this.secondsToUTCDate(tokenData.refresh_token_expires_in)
       : null;
 
     const grantedScopes =
@@ -618,9 +690,8 @@ export class LinkedInService {
       ? await this.encryptionService.encrypt(tokenData.refresh_token)
       : null;
 
-      const dbPlatformAccountId = accountType === 'PAGE' 
-      ? `PAGE-${profile.id}` 
-      : profile.id;
+    const dbPlatformAccountId =
+      accountType === 'PAGE' ? `PAGE-${profile.id}` : profile.id;
 
     const displayName =
       `${profile.firstName ?? ''} ${profile.lastName ?? ''}`.trim();
@@ -848,5 +919,9 @@ export class LinkedInService {
     }
 
     return null;
+  }
+
+  secondsToUTCDate(seconds: number): Date {
+    return new Date(Date.now() + seconds * 1000);
   }
 }
