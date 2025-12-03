@@ -11,7 +11,7 @@ import {
   LinkedInScheduledPost,
   MetaScheduledPost,
   TwitterScheduledPost,
-} from './interfaces/social-scheduler.interface';
+} from '../interfaces/social-scheduler.interface';
 import { EncryptionService } from '@/common/utility/encryption.service';
 import { PrismaService } from '@/prisma/prisma.service';
 import { Platform } from '@generated/enums';
@@ -51,8 +51,7 @@ export class PreparePostService {
         case Platform.X:
           return this.prepareTwitterPlatformPost(
             basePost,
-            post,
-            decryptedToken,
+            post
           );
 
         case Platform.LINKEDIN:
@@ -153,41 +152,56 @@ export class PreparePostService {
     }
   }
 
-  private prepareTwitterPlatformPost(
+private async prepareTwitterPlatformPost(
     basePost: BaseScheduledPost,
     post: any,
-    accessToken: string,
-  ): TwitterScheduledPost {
-    if (!post.socialAccount.platformAccountId) {
-      throw new BadRequestException(
-        'Twitter account missing platform account ID',
-      );
+    // Note: You need to fetch accessSecret here too
+  ): Promise<TwitterScheduledPost> {
+    
+    if (!post.socialAccount.accessToken || !post.socialAccount.accessSecret) {
+       throw new UnauthorizedException('Missing Twitter credentials');
     }
+
+    const [token, secret] = await Promise.all([
+       this.encryptionService.decrypt(post.socialAccount.accessToken),
+       this.encryptionService.decrypt(post.socialAccount.accessSecret)
+    ]);
 
     return {
       ...basePost,
       platform: Platform.X,
-      accessToken,
+      accessToken: `${token}:${secret}`, 
       accountId: post.socialAccount.platformAccountId,
     };
   }
 
-  private prepareLinkedInPlatformPost(
+private prepareLinkedInPlatformPost(
     basePost: BaseScheduledPost,
     post: any,
     accessToken: string,
   ): LinkedInScheduledPost {
-    if (!post.socialAccount.platformAccountId) {
-      throw new BadRequestException(
-        'LinkedIn account missing platform account ID',
-      );
+    
+    let targetUrnOrId: string;
+
+    if (post.pageAccountId && post.pageAccount) {
+      // CASE A: Posting to a Company Page
+      if (!post.pageAccount.platformPageId) {
+        throw new BadRequestException('Page account missing platformPageId');
+      }
+      targetUrnOrId = post.pageAccount.platformPageId;
+    } else {
+      // CASE B: Posting to Personal Profile
+      if (!post.socialAccount.platformAccountId) {
+        throw new BadRequestException('Social account missing platformAccountId');
+      }
+      targetUrnOrId = post.socialAccount.platformAccountId;
     }
 
     return {
       ...basePost,
       platform: Platform.LINKEDIN,
       accessToken,
-      accountId: post.socialAccount.platformAccountId,
+      accountId: targetUrnOrId,
     };
   }
 

@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { ScheduledPost, PublishingResult } from '../interfaces/social-scheduler.interface';
 import { HttpService } from '@nestjs/axios';
 
@@ -47,7 +47,7 @@ export abstract class BasePlatformService {
     } catch (error) {
       const errorMessage = this.extractErrorMessage(error);
       this.logger.error(`API request failed for ${operation}: ${errorMessage}`);
-      throw new Error(`Failed to ${operation}: ${errorMessage}`);
+      throw error;
     }
   }
 
@@ -57,7 +57,7 @@ export abstract class BasePlatformService {
 ): void {
   for (const field of requiredFields) {
     if (!post[field]) {
-      throw new Error(
+      throw new BadRequestException(
         `Required field '${field}' is missing for ${this.platform}`,
       );
     }

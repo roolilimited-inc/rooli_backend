@@ -1,7 +1,7 @@
 import { Processor, OnWorkerEvent, WorkerHost } from '@nestjs/bullmq';
 import { Job } from 'bullmq';
 import { Inject, Injectable, Logger, OnModuleInit } from '@nestjs/common';
-import { SocialSchedulerService } from '../social-scheduler.service';
+import { SocialSchedulerService } from '../services/social-scheduler.service';
 
 @Processor('social-posting')
 @Injectable()

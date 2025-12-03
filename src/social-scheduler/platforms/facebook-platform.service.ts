@@ -2,7 +2,6 @@ import { HttpService } from '@nestjs/axios';
 import { Injectable, Logger } from '@nestjs/common';
 import { firstValueFrom } from 'rxjs';
 import {
-  ScheduledPost,
   PublishingResult,
   MetaScheduledPost,
 } from '../interfaces/social-scheduler.interface';
@@ -27,25 +26,15 @@ export class FacebookPlatformService extends BasePlatformService {
   async schedulePost(post: MetaScheduledPost): Promise<PublishingResult> {
     return this.makeApiRequest(async () => {
       const { accessToken, pageId } = post;
-      this.validateFacebookPost(post, true);
-      console.log(post);
-      // Check content type first, then fall back to media detection
+      this.validateFacebookPost(post, true, true);
+
       const contentType = post.contentType as ContentType;
-      console.log('Content type for scheduling:', contentType);
 
       if (contentType === ContentType.REEL) {
-        return this.scheduleReelPost(post, accessToken, pageId);
+        return this.handleReel(post, accessToken, pageId, true);
       }
 
-      const mediaType = this.detectMediaType(post.mediaUrls?.[0] || '');
-
-      if (mediaType === 'video') {
-        return this.scheduleVideoPost(post, accessToken, pageId);
-      }
-
-      if (mediaType === 'photo') {
-        return this.schedulePhotoPost(post, accessToken, pageId);
-      }
+      return this.handleFeedPost(post, accessToken, pageId, true);
     }, 'schedule Facebook post');
   }
 
@@ -53,251 +42,204 @@ export class FacebookPlatformService extends BasePlatformService {
   async publishImmediately(post: MetaScheduledPost): Promise<PublishingResult> {
     return this.makeApiRequest(async () => {
       const { accessToken, pageId } = post;
-      this.validateFacebookPost(post, true);
+      this.validateFacebookPost(post, true, false);
 
-      // Check content type first, then fall back to media detection
       const contentType = post.contentType as ContentType;
 
       if (contentType === ContentType.REEL) {
-        return this.publishReelImmediately(post, accessToken, pageId);
+        return this.handleReel(post, accessToken, pageId, false);
       }
 
-      const mediaType = this.detectMediaType(post.mediaUrls?.[0] || '');
-
-      if (mediaType === 'video') {
-        return this.publishVideoImmediately(post, accessToken, pageId);
-      }
-
-      if (mediaType === 'photo') {
-        return this.publishPhotoImmediately(post, accessToken, pageId);
-      }
+      return this.handleFeedPost(post, accessToken, pageId, false);
     }, 'publish immediately to Facebook');
   }
 
-  /** Schedule a Facebook video post */
-  private async scheduleVideoPost(
-    post: ScheduledPost,
+  // ===========================================================================
+  // HANDLERS (Unified Logic for Scheduled & Immediate)
+  // ===========================================================================
+
+  private async handleFeedPost(
+    post: any,
     accessToken: string,
     pageId: string,
-  ): Promise<PublishingResult> {
-    const videoUrl = post.mediaUrls?.[0];
-    if (!videoUrl) throw new Error('Video URL is required for video posts');
+    isScheduled: boolean,
+  ) {
+    const attachedMedia = [];
 
-    const uploadUrl = `${this.baseUrl}/${pageId}/videos`;
-    const utcSeconds = Math.floor(new Date(post.scheduledAt).getTime() / 1000);
+    // 1. Upload ALL media (Photos AND Videos) as unpublished staging assets
+    if (post.mediaUrls?.length) {
+      this.logger.log(
+        `Uploading ${post.mediaUrls.length} items for staging...`,
+      );
 
-    const params = {
-      file_url: videoUrl,
-      published: false,
-      scheduled_publish_time: utcSeconds,
-      description: post.content || '',
+      for (const url of post.mediaUrls) {
+        const type = this.detectMediaType(url);
+        let mediaId: string;
+
+        if (type === 'video') {
+          mediaId = await this.uploadStagingVideo(pageId, url, accessToken);
+        } else {
+          mediaId = await this.uploadStagingPhoto(pageId, url, accessToken);
+        }
+
+        if (mediaId) attachedMedia.push({ media_fbid: mediaId });
+      }
+    }
+
+    // 2. Create the Post Container
+    const params: any = {
+      message: post.content,
       access_token: accessToken,
+      published: !isScheduled,
     };
 
-    this.logger.log(
-      `Scheduling Facebook video for page ${pageId} at ${utcSeconds}`,
-    );
+    // Attach the mixed list of IDs (Photos + Videos)
+    if (attachedMedia.length > 0) {
+      params.attached_media = JSON.stringify(attachedMedia);
+    }
+
+    if (isScheduled) {
+      params.scheduled_publish_time = Math.floor(
+        new Date(post.scheduledAt).getTime() / 1000,
+      );
+    }
 
     const response = await firstValueFrom(
-      this.http.post(uploadUrl, null, {
-        params,
-        timeout: this.uploadTimeout,
+      this.http.post(`${this.baseUrl}/${pageId}/feed`, null, { params }),
+    );
+
+    return {
+      success: true,
+      platformPostId: response.data.id,
+      metadata: response.data,
+    };
+  }
+
+  private async handleReel(
+    post: any,
+    accessToken: string,
+    pageId: string,
+    isScheduled: boolean,
+  ) {
+    const videoUrl = post.mediaUrls?.[0];
+    if (!videoUrl) throw new Error('Reel URL missing');
+
+    const initParams = { access_token: accessToken, upload_phase: 'start' };
+    const initRes = await firstValueFrom(
+      this.http.post(`${this.baseUrl}/${pageId}/video_reels`, null, {
+        params: initParams,
       }),
     );
 
-    this.logger.log(`Scheduled video upload response: ${response.data}`);
+    const { video_id, upload_url } = initRes.data;
 
-    return {
-      success: true,
-      platformPostId: response.data.id,
-      metadata: response.data,
-    };
-  }
+    this.logger.log(`Streaming Reel to Facebook: ${videoUrl}`);
+    await this.streamUrlToFacebook(videoUrl, upload_url);
 
-  /** Schedule photo post */
-  private async schedulePhotoPost(
-    post: ScheduledPost,
-    accessToken: string,
-    pageId: string,
-  ): Promise<PublishingResult> {
-    const mediaAttachments = await this.handleMediaUpload(
-      pageId,
-      post.mediaUrls,
-      accessToken,
-    );
-
-    const params = this.buildPostScheduleParams(
-      post,
-      accessToken,
-      mediaAttachments,
-    );
-
-    const url = `${this.baseUrl}/${pageId}/feed`;
-
-    const response = await firstValueFrom(
-      this.http.post(url, null, { params, timeout: this.requestTimeout }),
-    );
-
-    return {
-      success: true,
-      platformPostId: response.data.id,
-      metadata: response.data,
-    };
-  }
-
-  /** Schedule a Facebook Reel */
-private async scheduleReelPost(
-  post: ScheduledPost,
-  accessToken: string,
-  pageId: string,
-): Promise<PublishingResult> {
-  const videoUrl = post.mediaUrls?.[0];
-  if (!videoUrl) throw new Error('Video URL is required for Reel posts');
-
-  const { videoId, uploadUrl } = await this.initiateReelUpload(pageId, accessToken);
-  await this.uploadVideoFileFromUrl(uploadUrl, videoUrl, accessToken);
-
-  const utcSeconds = Math.floor(new Date(post.scheduledAt).getTime() / 1000);
-
-  const params = {
-    upload_phase: 'finish',
-    video_id: videoId,
-    description: post.content || '',
-    video_state: 'SCHEDULED',
-    scheduled_publish_time: utcSeconds,
-    access_token: accessToken,
-  };
-
-  const finishUrl = `${this.baseUrl}/${pageId}/video_reels`;
-
-  this.logger.log(`Scheduling Facebook Reel for page ${pageId} at ${utcSeconds}`);
-
-  const response = await firstValueFrom(
-    this.http.post(finishUrl, null, {
-      params,
-      timeout: this.uploadTimeout,
-    }),
-  );
-
-  return {
-    success: true,
-    platformPostId: response.data.post_id,
-    metadata: response.data,
-  };
-}
-
-
-  /** Publish a Facebook video immediately */
-  private async publishVideoImmediately(
-    post: ScheduledPost,
-    accessToken: string,
-    pageId: string,
-  ): Promise<PublishingResult> {
-    const videoUrl = post.mediaUrls?.[0];
-    if (!videoUrl) throw new Error('Video URL is required for video posts');
-
-    const uploadUrl = `${this.baseUrl}/${pageId}/videos`;
-
-    const params = {
-      file_url: videoUrl,
-      published: true,
-      description: post.content || '',
+    const finishParams: any = {
       access_token: accessToken,
-    };
-
-    this.logger.log(`Publishing video immediately for page ${pageId}`);
-
-    const response = await firstValueFrom(
-      this.http.post(uploadUrl, null, {
-        params,
-        timeout: this.uploadTimeout,
-      }),
-    );
-
-    console.log('response:', response.data);
-    //this.logger.log(`Video publish response: ${response.data}`);
-
-    return {
-      success: true,
-      platformPostId: response.data.id,
-      publishedAt: new Date(),
-      metadata: response.data,
-    };
-  }
-
-  /** Publish a Facebook photo immediately */
-  private async publishPhotoImmediately(
-    post: ScheduledPost,
-    accessToken: string,
-    pageId: string,
-  ): Promise<PublishingResult> {
-    const mediaAttachments = await this.handleMediaUpload(
-      pageId,
-      post.mediaUrls,
-      accessToken,
-    );
-
-    const params = this.buildPublishParams(post, accessToken, mediaAttachments);
-
-    const url = `${this.baseUrl}/${pageId}/feed`;
-
-    this.logger.log(`Publishing photo immediately for page ${pageId}`);
-
-    const response = await firstValueFrom(
-      this.http.post(url, null, { params, timeout: this.requestTimeout }),
-    );
-
-    console.log('Photo immediately publish response:', response.data);
-
-    return {
-      success: true,
-      platformPostId: response.data.id,
-      publishedAt: new Date(),
-      metadata: response.data,
-    };
-  }
-
-  /** Publish a Facebook Reel immediately */
-  private async publishReelImmediately(
-    post: ScheduledPost,
-    accessToken: string,
-    pageId: string,
-  ): Promise<PublishingResult> {
-    const videoUrl = post.mediaUrls?.[0];
-    if (!videoUrl) throw new Error('Video URL is required for Reel posts');
-
-    const { videoId, uploadUrl } = await this.initiateReelUpload(
-      pageId,
-      accessToken,
-    );
-
-    await this.uploadVideoFileFromUrl(uploadUrl, videoUrl, accessToken);
-
-    const params = {
       upload_phase: 'finish',
-      video_id: videoId,
-      video_state: 'PUBLISHED',
-      description: post.content || '',
-      access_token: accessToken,
+      video_id,
+      description: post.content,
+      video_state: isScheduled ? 'SCHEDULED' : 'PUBLISHED',
     };
 
-    this.logger.log(`Publishing Reel immediately for page ${pageId}`);
+    if (isScheduled) {
+      finishParams.scheduled_publish_time = Math.floor(
+        new Date(post.scheduledAt).getTime() / 1000,
+      );
+    }
 
-    const response = await firstValueFrom(
-      this.http.post(uploadUrl, null, {
-        params,
-        timeout: this.uploadTimeout,
+    const finishRes = await firstValueFrom(
+      this.http.post(`${this.baseUrl}/${pageId}/video_reels`, null, {
+        params: finishParams,
       }),
     );
 
-    this.logger.log(`Reel publish response: ${response.data}`);
-
     return {
       success: true,
-      platformPostId: response.data.post_id,
-      publishedAt: new Date(),
-      metadata: response.data,
+      platformPostId: finishRes.data.post_id || video_id,
+      metadata: finishRes.data,
     };
+  }
+
+  private async uploadStagingPhoto(
+    pageId: string,
+    url: string,
+    accessToken: string,
+  ): Promise<string> {
+    const params = {
+      url: url,
+      published: false,
+      access_token: accessToken,
+      temporary: true,
+    };
+    const res = await firstValueFrom(
+      this.http.post(`${this.baseUrl}/${pageId}/photos`, null, { params }),
+    );
+    return res.data.id;
+  }
+
+  /**
+   * New Helper: Uploads a video but does NOT post it to the feed.
+   * This allows it to be attached to a mixed media post later.
+   */
+  private async uploadStagingVideo(
+    pageId: string,
+    url: string,
+    accessToken: string,
+  ): Promise<string> {
+    const params = {
+      file_url: url,
+      published: false, // Critical: Don't show on feed yet
+      access_token: accessToken,
+    };
+
+    // Note: 'videos' endpoint usually supports file_url for standard videos
+    const res = await firstValueFrom(
+      this.http.post(`${this.baseUrl}/${pageId}/videos`, null, { params }),
+    );
+
+    return res.data.id;
+  }
+
+  /**
+   * CRITICAL: Streams a file from a URL directly to Facebook's upload endpoint.
+   * This avoids loading the whole file into memory.
+   */
+  private async streamUrlToFacebook(
+    fileUrl: string,
+    uploadEndpoint: string,
+  ): Promise<void> {
+    // 1. Get the Read Stream from your CDN
+    const fileStream = await this.http.axiosRef({
+      url: fileUrl,
+      method: 'GET',
+      responseType: 'stream',
+    });
+
+    const totalLength = fileStream.headers['content-length'];
+
+    // 2. Pipe it to Facebook
+    // Note: The upload_url provided by Facebook usually contains the auth signature.
+    // We strictly send the binary data as the body.
+    await this.http.axiosRef({
+      url: uploadEndpoint,
+      method: 'POST',
+      data: fileStream.data,
+      headers: {
+        Authorization: `OAuth ${fileStream.config.headers['Authorization'] || ''}`, // usually empty/not needed for upload_url
+        'Content-Type': 'application/octet-stream',
+        'Content-Length': totalLength,
+      },
+      maxBodyLength: Infinity,
+      maxContentLength: Infinity,
+    });
+  }
+
+  private detectMediaType(url: string = ''): 'video' | 'photo' {
+    const isVideo = url.match(/\.(mp4|mov|avi|mkv)$/i) || url.includes('video');
+    return isVideo ? 'video' : 'photo';
   }
 
   /** Delete a scheduled Facebook post */
@@ -349,223 +291,17 @@ private async scheduleReelPost(
     }
   }
 
-  /** Handle media upload with proper validation */
-  private async handleMediaUpload(
-    pageId: string,
-    mediaUrls: string[] | undefined,
-    accessToken: string,
-  ): Promise<string[]> {
-    if (!mediaUrls?.length) {
-      return [];
-    }
-
-    this.logger.log(
-      `Uploading ${mediaUrls.length} media files to Facebook for page ${pageId}`,
-    );
-
-    const uploadedFbIds: string[] = [];
-    const batches = this.createBatches(mediaUrls, this.concurrencyLimit);
-
-    for (const [batchIndex, batch] of batches.entries()) {
-      const results = await Promise.allSettled(
-        batch.map((url, index) =>
-          this.uploadSingleMediaFile(pageId, url, accessToken),
-        ),
-      );
-
-      results.forEach((result, index) => {
-        const mediaUrl = batch[index];
-        if (result.status === 'fulfilled' && result.value) {
-          uploadedFbIds.push(result.value);
-          this.logger.log(
-            `Successfully uploaded media: ${mediaUrl} -> ${result.value}`,
-          );
-        } else if (result.status === 'rejected') {
-          this.logger.warn(
-            `Failed to upload media in batch ${batchIndex}, item ${index}: ${mediaUrl}`,
-            result.reason,
-          );
-        }
-      });
-    }
-
-    this.logger.log(
-      `Successfully uploaded ${uploadedFbIds.length}/${mediaUrls.length} media files`,
-    );
-    return uploadedFbIds;
-  }
-
-  /** Handle single media upload (image, video, or reel) */
-  private async uploadSingleMediaFile(
-    pageId: string,
-    mediaUrl: string,
-    accessToken: string,
-  ): Promise<string | null> {
-    try {
-      const mediaType = this.detectMediaType(mediaUrl);
-      const endpoint = this.getEndpointForMediaType(mediaType);
-      const uploadUrl = `${this.baseUrl}/${pageId}/${endpoint}`;
-      const params = this.buildMediaUploadParams(
-        mediaUrl,
-        mediaType,
-        accessToken,
-      );
-
-      this.logger.log(`Uploading ${mediaType} to Facebook for page ${pageId}`);
-
-      const response = await firstValueFrom(
-        this.http.post(uploadUrl, null, {
-          params,
-          timeout: this.uploadTimeout,
-        }),
-      );
-
-      const mediaId = response.data?.id;
-      if (!mediaId) {
-        throw new Error('No media ID returned from Facebook');
-      }
-
-      this.logger.log(`Successfully uploaded media with ID: ${mediaId}`);
-      return mediaId;
-    } catch (error) {
-      this.logger.error(
-        `Failed to upload media to Facebook: ${mediaUrl}`,
-        error.stack || error.message,
-      );
-      throw error; // Re-throw to let caller handle
-    }
-  }
-
-  private buildPostScheduleParams(
-    post: ScheduledPost,
-    accessToken: string,
-    mediaAttachments: string[],
-  ): Record<string, any> {
-    const utcSeconds = Math.floor(new Date(post.scheduledAt).getTime() / 1000);
-
-    this.logger.log(`Scheduling Facebook post at UTC time: ${utcSeconds}`);
-
-    const params: Record<string, any> = {
-      message: post.content,
-      scheduled_publish_time: utcSeconds,
-      published: false,
-      access_token: accessToken,
-    };
-
-    if (mediaAttachments.length > 0) {
-      params.attached_media = JSON.stringify(
-        mediaAttachments.map((id) => ({ media_fbid: id })),
-      );
-    }
-
-    return params;
-  }
-
-  /** Build params for immediate publish */
-  private buildPublishParams(
-    post: ScheduledPost,
-    accessToken: string,
-    mediaAttachments: string[],
-  ): Record<string, any> {
-    const params: Record<string, any> = {
-      message: post.content,
-      access_token: accessToken,
-    };
-
-    if (mediaAttachments.length > 0) {
-      params.attached_media = JSON.stringify(
-        mediaAttachments.map((id) => ({ media_fbid: id })),
-      );
-    }
-
-    return params;
-  }
-
-  /** Build parameters for Facebook media upload */
-  private buildMediaUploadParams(
-    mediaUrl: string,
-    mediaType: 'photo' | 'video' | 'reel',
-    accessToken: string,
-  ): Record<string, any> {
-    const baseParams = {
-      access_token: accessToken,
-      published: false,
-    };
-
-    switch (mediaType) {
-      case 'photo':
-        return { ...baseParams, url: mediaUrl };
-      case 'video':
-        return { ...baseParams, file_url: mediaUrl };
-      case 'reel':
-        return { ...baseParams, video_url: mediaUrl };
-      default:
-        throw new Error(`Unsupported media type: ${mediaType}`);
-    }
-  }
-
-  /** Detect media type from URL */
-  private detectMediaType(url: string): 'photo' | 'video' | 'reel' {
-    if (!url) return 'photo';
-
-    const lowerUrl = url.toLowerCase();
-
-    if (lowerUrl.includes('reel')) {
-      return 'reel';
-    }
-
-    const videoExtensions = ['.mp4', '.mov', '.avi', '.mkv', '.webm'];
-    if (videoExtensions.some((ext) => lowerUrl.includes(ext))) {
-      return 'video';
-    }
-
-    return 'photo';
-  }
-
-  /** Get API endpoint for media type */
-  private getEndpointForMediaType(
-    mediaType: 'photo' | 'video' | 'reel',
-  ): string {
-    const endpoints = {
-      photo: 'photos',
-      video: 'videos',
-      reel: 'video_reels',
-    };
-
-    if (!endpoints[mediaType]) {
-      throw new Error(`Unsupported media type: ${mediaType}`);
-    }
-
-    return endpoints[mediaType];
-  }
-
-  /** Create batches from array */
-  private createBatches<T>(items: T[], batchSize: number): T[][] {
-    const batches: T[][] = [];
-    for (let i = 0; i < items.length; i += batchSize) {
-      batches.push(items.slice(i, i + batchSize));
-    }
-    return batches;
-  }
-
-  /** Validate URL format */
-  private isValidUrl(url: string): boolean {
-    if (!url?.trim()) {
-      return false;
-    }
-    try {
-      const urlObj = new URL(url);
-      return urlObj.protocol === 'http:' || urlObj.protocol === 'https:';
-    } catch {
-      return false;
-    }
-  }
-
   /** Validate Facebook post data */
   private validateFacebookPost(
     post: MetaScheduledPost,
     requirePageId = false,
+    isScheduling = false, // <--- New Flag
   ): void {
+    if (!post) throw new Error('Post data is required');
+    if (requirePageId && !post.pageId?.trim())
+      throw new Error('Page ID required');
+    if (!post.accessToken?.trim()) throw new Error('Access token required');
+
     if (!post) {
       throw new Error('Post data is required');
     }
@@ -584,70 +320,16 @@ private async scheduleReelPost(
       );
     }
 
-    if (post.mediaUrls?.length) {
-      const invalidUrls = post.mediaUrls.filter((url) => !this.isValidUrl(url));
-      if (invalidUrls.length > 0) {
-        throw new Error(`Invalid media URL format: ${invalidUrls.join(', ')}`);
+    if (isScheduling) {
+      const scheduleDate = new Date(post.scheduledAt);
+      const now = new Date();
+      const diffMinutes = (scheduleDate.getTime() - now.getTime()) / 1000 / 60;
+
+      if (diffMinutes < 10) {
+        throw new Error(
+          'Facebook Native Scheduling requires at least 10 minutes buffer.',
+        );
       }
-    }
-  }
-
-  private async initiateReelUpload(
-    pageId: string,
-    token: string,
-  ): Promise<{ videoId: string; uploadUrl: string }> {
-    const url = `${this.baseUrl}/${pageId}/video_reels`;
-    const params = {
-      upload_phase: 'start',
-      access_token: token,
-    };
-
-    const response = await firstValueFrom(
-      this.http.post(url, null, {
-        params,
-        timeout: this.uploadTimeout,
-      }),
-    );
-
-    this.logger.log('Reel upload initiation response:', response.data);
-
-    const { video_id, upload_url } = response.data || {};
-
-    if (!video_id || !upload_url) {
-      throw new Error(
-        `Reel initialization failed: missing video_id or upload_url. Response: ${JSON.stringify(
-          response.data,
-        )}`,
-      );
-    }
-
-    return { videoId: video_id, uploadUrl: upload_url };
-  }
-
-  // Add this missing method
-  private async uploadVideoFileFromUrl(
-    uploadUrl: string, // use the upload_url from start phase
-    videoUrl: string, // your CDN URL
-    accessToken: string, // page access token
-  ): Promise<void> {
-    const headers: Record<string, string> = {
-      Authorization: `OAuth ${accessToken}`,
-      file_url: videoUrl,
-    };
-
-    const response = await firstValueFrom(
-      this.http.post(uploadUrl, null, {
-        headers,
-        timeout: this.uploadTimeout,
-      }),
-    );
-
-    this.logger.log('Hosted video file upload response:', response.data);
-
-    if (!response.data?.success) {
-      throw new Error(
-        `Video file upload failed: ${JSON.stringify(response.data)}`,
-      );
     }
   }
 }

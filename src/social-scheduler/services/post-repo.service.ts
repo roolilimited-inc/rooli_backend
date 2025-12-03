@@ -1,6 +1,6 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
-import { ERROR_MESSAGES } from './constants/scheduler.constants';
-import { UpdatePostStatus } from './interfaces/social-scheduler.interface';
+import { ERROR_MESSAGES } from '../constants/scheduler.constants';
+import { UpdatePostStatus } from '../interfaces/social-scheduler.interface';
 import { PrismaService } from '@/prisma/prisma.service';
 import { PostStatus, ScheduleJobStatus } from '@generated/enums';
 
@@ -18,6 +18,10 @@ export class PostRepository {
         socialAccount: {
           include: { pages: true },
         },
+        childPosts: { 
+           orderBy: { createdAt: 'asc' }, // Ensure thread order
+           include: { mediaFileIds: true }
+        },
       },
     });
 
@@ -30,15 +34,24 @@ export class PostRepository {
 
   async updatePostStatus(data: UpdatePostStatus): Promise<void> {
     const { postId, status, queueStatus, metadata } = data;
-    const post = await this.findById(postId);
-    const mergedMetadata = {
-      ...(post?.metadata || {}),
-      ...metadata,
-    };
 
-    await this.prisma.post.update({
-      where: { id: postId },
-      data: { status, queueStatus, metadata: mergedMetadata },
+    await this.prisma.$transaction(async (tx) => {
+      const post = await this.findById(postId);
+
+      const currentMeta = this.extractMetadata(post.metadata);
+      const mergedMetadata = {
+        ...currentMeta,
+        ...this.extractMetadata(metadata),
+      };
+
+      await tx.post.update({
+        where: { id: postId },
+        data: {
+          status,
+          queueStatus,
+          metadata: mergedMetadata,
+        },
+      });
     });
   }
 

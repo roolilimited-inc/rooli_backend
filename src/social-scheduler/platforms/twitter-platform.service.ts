@@ -1,7 +1,7 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { HttpService } from '@nestjs/axios';
 import { firstValueFrom } from 'rxjs';
-import { TwitterApi, ApiResponseError } from 'twitter-api-v2';
+import { TwitterApi, EUploadMimeType, SendTweetV2Params } from 'twitter-api-v2';
 
 import { BasePlatformService } from './base-platform.service';
 import {
@@ -9,251 +9,227 @@ import {
   PublishingResult,
   TwitterScheduledPost,
 } from '../interfaces/social-scheduler.interface';
+import { ConfigService } from '@nestjs/config';
 
 @Injectable()
 export class TwitterPlatformService extends BasePlatformService {
-  readonly platform = 'TWITTER';
-  protected readonly logger = new Logger(TwitterPlatformService.name);
+  readonly platform = 'X';
+  private readonly appKey: string;
+  private readonly appSecret: string;
 
-  // If you need app-level credentials for some flows, inject via env/config
-  constructor(http: HttpService) {
+  constructor(
+    http: HttpService,
+    private readonly configService: ConfigService,
+  ) {
     super(http);
+    this.appKey = this.configService.get<string>('X_API_KEY');
+    this.appSecret = this.configService.get<string>('X_API_SECRET');
+
+    if (!this.appKey || !this.appSecret) {
+      throw new Error('Twitter API credentials missing in config');
+    }
   }
 
-  /**
-   * For Twitter there’s no real “native scheduling” API exposed like Facebook.
-   * In your architecture, Twitter posts are scheduled via BullMQ and then
-   * `publishImmediately` is called at the right time.
-   *
-   * But we still implement this to satisfy the interface.
-   */
+  // ===========================================================================
+  // PUBLIC METHODS
+  // ===========================================================================
+
+
   async schedulePost(post: TwitterScheduledPost): Promise<PublishingResult> {
-    this.logger.warn(
-      `schedulePost called for Twitter – falling back to immediate publish. postId=${post.id}`,
-    );
-    return this.publishImmediately(post);
+    return this.makeApiRequest(async () => {
+      this.validatePost(post);
+      return { success: true };
+    }, 'validate Twitter post');
   }
 
-  /**
-   * Publish a tweet immediately.
-   * Expects:
-   *  - post.content       → tweet text
-   *  - post.mediaUrls     → URLs to images/videos (optional)
-   *  - post.metadata.accessToken → user OAuth2 access token for Twitter
-   *
-   * NOTE: In your scheduler, this will be called via prepareGenericPlatformPost,
-   * which sets:
-   *   metadata: { accessToken, platformAccountId }
-   */
-  async publishImmediately(post: TwitterScheduledPost): Promise<PublishingResult> {
-    const context = { postId: post.id, platform: this.platform };
+async publishImmediately(post: TwitterScheduledPost): Promise<PublishingResult> {
+    return this.makeApiRequest(async () => {
+      this.validatePost(post);
+      const client = this.getClient(post.accessToken);
 
-    try {
-      this.validateRequiredFields(post, ['accessToken']);
-
-      const { accessToken } = post;
-      const client = this.createUserClient(accessToken);
-
-      const text = (post.content || '').trim();
-      if (!text && (!post.mediaUrls || post.mediaUrls.length === 0)) {
-        throw new Error('Twitter post requires text or at least one media URL');
+      // CASE A: IT IS A THREAD
+      if (post.threadItems && post.threadItems.length > 0) {
+         return this.handleThread(client, post);
       }
 
-      // Upload media if present
-      let mediaIds: string[] | undefined;
-      if (post.mediaUrls && post.mediaUrls.length > 0) {
-        mediaIds = await this.uploadMediaForTweet(client, post.mediaUrls, context);
+      // CASE B: SINGLE TWEET
+      return this.handleSingleTweet(client, post);
+
+    }, 'publish to Twitter');
+  }
+
+  async deleteScheduledPost(postId: string, accessToken: string): Promise<boolean> {
+    return this.makeApiRequest(async () => {
+      if (!postId) throw new Error('Post ID is required');
+      
+      const client = this.getClient(accessToken);
+      
+      this.logger.log(`Deleting Tweet: ${postId}`);
+      const result = await client.v2.deleteTweet(postId);
+
+      if (!result.data?.deleted) {
+        throw new Error('Twitter API reported deletion failed');
       }
 
-      this.logger.log('Publishing tweet', {
-        ...context,
-        hasMedia: !!mediaIds?.length,
-      });
-
-      // twitter-api-v2 v2.tweet takes args: text + options
-      const response = await this.makeApiRequest(
-  () =>
-    client.v2.tweet(text, {
-      ...(mediaIds?.length
-        ? { media: { media_ids: this.toMediaIdsTuple(mediaIds) } }
-        : {}),
-    }),
-  'publish tweet',
-);
-      const tweetId = response.data.id;
-
-      return {
-        success: true,
-        platformPostId: tweetId,
-        metadata: {
-          url: `https://twitter.com/i/web/status/${tweetId}`,
-          mediaIds: mediaIds ?? [],
-        },
-      };
-    } catch (error) {
-      return this.handleError(error, 'Twitter publish', context);
-    }
-  }
-
-  /**
-   * Delete a tweet by its ID.
-   * This is used by your scheduler when cancelling or cleaning up.
-   */
-  async deleteScheduledPost(
-    postId: string,
-    accessToken: string,
-  ): Promise<boolean> {
-    const client = this.createUserClient(accessToken);
-
-    try {
-      await this.makeApiRequest(
-        () => client.v2.deleteTweet(postId),
-        'delete tweet',
-      );
-
-      this.logger.log('Deleted tweet', { tweetId: postId });
       return true;
-    } catch (error) {
-      this.logger.error('Failed to delete tweet', {
-        tweetId: postId,
-        error: this.extractErrorMessage(error),
-      });
-      return false;
+    }, 'delete Twitter tweet');
+  }
+
+  // ===========================================================================
+  // THREAD HANDLER (New)
+  // ===========================================================================
+
+  private async handleThread(client: TwitterApi, post: TwitterScheduledPost) {
+    this.logger.log(`Publishing Thread (${post.threadItems.length + 1} tweets)...`);
+
+    //  Prepare Root Tweet Payload
+    const rootPayload = await this.prepareTweetPayload(client, post.content, post.mediaUrls);
+    
+    // Prepare Child Tweets Payloads
+    const threadPayloads: SendTweetV2Params[] = [rootPayload];
+
+    for (const child of post.threadItems) {
+      const childPayload = await this.prepareTweetPayload(client, child.content, child.mediaUrls);
+      threadPayloads.push(childPayload);
     }
-  }
 
-  /**
-   * Optional helper: verify that the stored token is valid and we can access the account.
-   * You could use this when connecting a Twitter account or refreshing it.
-   */
-  async validateCredentials(accessToken: string): Promise<boolean> {
-    try {
-      const client = this.createUserClient(accessToken);
-      const me = await this.makeApiRequest(() => client.v2.me(), 'validate credentials');
+    //  Execute Atomic Thread
+    // twitter-api-v2 handles the chaining (reply_id) automatically
+    const result = await client.v2.tweetThread(threadPayloads);
 
-      this.logger.log('Twitter credentials valid', {
-        userId: me.data.id,
-        username: me.data.username,
-      });
-
-      return true;
-    } catch (error) {
-      this.logger.warn('Twitter credentials validation failed', {
-        error: this.extractErrorMessage(error),
-      });
-      return false;
+    if (!result || result.length === 0) {
+      throw new Error('Thread creation failed');
     }
+
+    // Return the ID of the ROOT tweet
+    const rootTweet = result[0].data;
+    
+    return {
+      success: true,
+      platformPostId: rootTweet.id,
+      publishedAt: new Date(),
+      metadata: { 
+        threadIds: result.map(t => t.data.id), // Save all IDs
+        rootId: rootTweet.id 
+      },
+    };
   }
 
-  // ============================================================
-  // INTERNAL HELPERS
-  // ============================================================
+  // ===========================================================================
+  // HELPERS
+  // ===========================================================================
 
   /**
-   * Create a client authenticated as a user via OAuth2 access token.
-   * You must have obtained this token via your own OAuth flow and stored it
-   * in `socialAccount.accessToken`.
-   *
-   * For typical OAuth2 user context, twitter-api-v2 supports:
-   *   new TwitterApi(userAccessToken)
+   * Helper to create an authenticated Twitter Client.
+   * Expects 'accessToken' to be "TOKEN:SECRET"
    */
-  private createUserClient(accessToken: string): TwitterApi {
-    return new TwitterApi(accessToken);
+  private getClient(compositeToken: string): TwitterApi {
+    const [token, secret] = compositeToken.split(':');
+
+    if (!token || !secret) {
+      throw new Error('Invalid Twitter Token format. Expected "token:secret"');
+    }
+
+    return new TwitterApi({
+      appKey: this.appKey,
+      appSecret: this.appSecret,
+      accessToken: token,
+      accessSecret: secret,
+    });
   }
 
   /**
-   * Download media from URLs and upload to Twitter.
-   * Returns an array of `media_id`s to send with the tweet.
+   * Refactored logic to prepare params for ANY tweet (Root or Child)
    */
-  private async uploadMediaForTweet(
-    client: TwitterApi,
-    mediaUrls: string[],
-    context: any,
-  ): Promise<string[]> {
+ private async prepareTweetPayload(
+    client: TwitterApi, 
+    content: string, 
+    mediaUrls: string[] = []
+  ): Promise<SendTweetV2Params> {
+    
+    const params: SendTweetV2Params = { text: content || '' };
     const mediaIds: string[] = [];
 
-    for (const url of mediaUrls) {
-      try {
-        const buffer = await this.downloadMedia(url);
-        const mediaType = this.detectMediaTypeFromUrl(url);
-
-        this.logger.debug('Uploading media for tweet', {
-          ...context,
-          url,
-          mediaType,
-        });
-
-        // twitter-api-v2 uses v1 endpoint for uploads
-        const mediaId = await client.v1.uploadMedia(buffer, {
-          type: mediaType,
-        });
-
-        mediaIds.push(mediaId);
-      } catch (error) {
-        this.logger.error('Failed to upload media for tweet', {
-          ...context,
-          url,
-          error: this.extractErrorMessage(error),
-        });
-        // You can decide whether to fail the whole tweet or continue without this media
-        // For now we just skip that media and continue.
+    if (mediaUrls.length > 0) {
+      this.validateMediaRules(mediaUrls); // Ensures max 4 items
+      for (const url of mediaUrls) {
+        const mediaId = await this.uploadMedia(client, url);
+        if (mediaId) mediaIds.push(mediaId);
       }
     }
 
-    return mediaIds;
+    if (mediaIds.length > 0) {
+      // FIX: Cast string[] to the specific tuple type Twitter expects
+      params.media = { 
+        media_ids: mediaIds as unknown as [string] | [string, string] | [string, string, string] | [string, string, string, string] 
+      };
+    }
+
+    return params;
+  }
+
+  private async handleSingleTweet(client: TwitterApi, post: TwitterScheduledPost) {
+    const params = await this.prepareTweetPayload(client, post.content, post.mediaUrls);
+    const result = await client.v2.tweet(params);
+    
+    return {
+      success: true,
+      platformPostId: result.data.id,
+      publishedAt: new Date(),
+      metadata: result.data,
+    };
   }
 
   /**
-   * Download a file as Buffer from a URL using HttpService.
+   * Downloads file from CDN and uploads to Twitter using v1.1 API.
+   * Twitter requires binary buffer or path.
    */
-  private async downloadMedia(url: string): Promise<Buffer> {
+  private async uploadMedia(client: TwitterApi, url: string): Promise<string> {
+    //  Download File to Buffer
     const response = await firstValueFrom(
-      this.http.get(url, { responseType: 'arraybuffer' }),
+      this.http.get(url, { responseType: 'arraybuffer' })
     );
-    return Buffer.from(response.data);
+    const buffer = Buffer.from(response.data);
+    const contentType = response.headers['content-type'];
+
+    // 2. Determine MediaType for Twitter
+    // Twitter needs to know if it's a video to process it asynchronously
+    const mimeType = this.getMimeType(contentType, url);
+    const isVideo = mimeType.startsWith('video');
+
+   // 3. Upload
+    const mediaId = await client.v1.uploadMedia(buffer, {
+      mimeType: mimeType as EUploadMimeType,
+      type: isVideo ? 'tweet_video' : 'tweet_image', 
+      target: 'tweet'
+    });
+
+    return mediaId;
   }
 
-  /**
-   * Very simple media type detector based on file extension.
-   * twitter-api-v2 uploadMedia expects a limited set of types:
-   *   { type: 'png' | 'jpg' | 'gif' | 'mp4' }
-   */
-  private detectMediaTypeFromUrl(url: string): 'png' | 'jpg' | 'gif' | 'mp4' {
-    const lower = url.toLowerCase();
-
-    if (lower.endsWith('.mp4') || lower.includes('video')) return 'mp4';
-    if (lower.endsWith('.gif')) return 'gif';
-    if (lower.endsWith('.png')) return 'png';
-    return 'jpg'; // default fallback
+  private validatePost(post: any) {
+    if (!post.accessToken) throw new Error('Access Token required');
+    if (!post.content && (!post.mediaUrls || post.mediaUrls.length === 0)) {
+      throw new Error('Tweet requires text content or media');
+    }
   }
 
-  /**
-   * Override BasePlatformService.extractErrorMessage to handle Twitter errors
-   * a bit more nicely (optional but handy).
-   */
-protected extractErrorMessage(error: any): string {
-    // ApiResponseError holds structured Twitter API error responses
-    if (error instanceof ApiResponseError) {
-      if (error.data?.errors?.length) {
-        return error.data.errors.map((e: any) => e.message).join('; ');
-      }
-
-    return error.message || 'Twitter API error';
+  private validateMediaRules(urls: string[]) {
+   if (urls.length > 4) {
+      throw new Error('Twitter supports a maximum of 4 media items per tweet.');
+    }
   }
 
-  return super.extractErrorMessage(error);
-}
-  private toMediaIdsTuple(
-  mediaIds: string[],
-): [string] | [string, string] | [string, string, string] | [string, string, string, string] {
-  const ids = mediaIds.slice(0, 4); // Twitter max 4
-
-  if (ids.length === 0) {
-    throw new Error('mediaIds must have at least one id');
+  private isVideo(url: string): boolean {
+    return url.match(/\.(mp4|mov|avi|mkv)$/i) !== null;
   }
-  if (ids.length === 1) return [ids[0]];
-  if (ids.length === 2) return [ids[0], ids[1]];
-  if (ids.length === 3) return [ids[0], ids[1], ids[2]];
-  return [ids[0], ids[1], ids[2], ids[3]];
-}
+
+  private getMimeType(headerType: string, url: string): string {
+    if (headerType) return headerType;
+    if (url.endsWith('.mp4')) return 'video/mp4';
+    if (url.endsWith('.jpg') || url.endsWith('.jpeg')) return 'image/jpeg';
+    if (url.endsWith('.png')) return 'image/png';
+    if (url.endsWith('.gif')) return 'image/gif';
+    return 'image/jpeg'; // Default fallback
+  }
 }

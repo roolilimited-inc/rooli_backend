@@ -1,6 +1,6 @@
 import { NotificationService } from '@/notification/notification.service';
 import { PrismaService } from '@/prisma/prisma.service';
-import { SocialSchedulerService } from '@/social-scheduler/social-scheduler.service';
+import { SocialSchedulerService } from '@/social-scheduler/services/social-scheduler.service';
 import {
   Injectable,
   Logger,

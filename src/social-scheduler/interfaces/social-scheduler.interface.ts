@@ -11,7 +11,7 @@ export interface BaseScheduledPost {
   id: string;
   content: string;
   mediaUrls: string[];
-  scheduledAt: string;
+  scheduledAt: Date;
   timezone?: string;
 }
 
@@ -36,6 +36,12 @@ export interface TwitterScheduledPost extends BaseScheduledPost {
   platform: Platform;
   accessToken: string;
   accountId: string;
+  threadItems?: ThreadItem[];
+}
+
+export interface ThreadItem {
+  content: string;
+  mediaUrls: string[];
 }
 
 export interface LinkedInScheduledPost extends BaseScheduledPost {

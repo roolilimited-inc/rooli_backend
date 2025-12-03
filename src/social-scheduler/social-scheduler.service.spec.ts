@@ -1,5 +1,5 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { SocialSchedulerService } from './social-scheduler.service';
+import { SocialSchedulerService } from './services/social-scheduler.service';
 
 describe('SocialSchedulerService', () => {
   let service: SocialSchedulerService;
