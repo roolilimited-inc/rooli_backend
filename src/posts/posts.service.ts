@@ -353,7 +353,6 @@ export class PostsService {
     localDateTimeString: string,
     timezone: string,
   ): Date {
-    console.log(localDateTimeString, timezone)
     // This helper converts "9:00 AM in Lagos" to the equivalent Javascript Date object (which is always UTC internally)
     const utcDate = fromZonedTime(localDateTimeString, timezone);
 

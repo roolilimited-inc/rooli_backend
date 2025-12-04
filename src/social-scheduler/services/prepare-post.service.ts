@@ -26,13 +26,12 @@ export class PreparePostService {
   ) {}
 
   async preparePlatformPost(post: any) {
-    console.log(post)
     try {
-      const mediaIds = post.mediaFileIds?.map((f: any) => f.url) || [];
-      const [mediaUrls, decryptedToken] = await Promise.all([
-        this.getMediaFiles(mediaIds || []),
-        this.decryptToken(post.socialAccount.accessToken, 'social account'),
-      ]);
+      const mediaUrls = post.mediaFileIds?.map((f: any) => f.url) || [];
+      const decryptedToken = await this.decryptToken(
+        post.socialAccount.accessToken,
+        'social account',
+      );
 
       const basePost: BaseScheduledPost = {
         id: post.id,
@@ -51,10 +50,7 @@ export class PreparePostService {
           );
 
         case Platform.X:
-          return this.prepareTwitterPlatformPost(
-            basePost,
-            post
-          );
+          return this.prepareTwitterPlatformPost(basePost, post);
 
         case Platform.LINKEDIN:
           return this.prepareLinkedInPlatformPost(
@@ -116,7 +112,7 @@ export class PreparePostService {
           pageId: pageAccount.platformPageId,
           pageAccountId: pageAccount.id,
           contentType: post.contentType,
-          metadata: post.metadata
+          metadata: post.metadata,
         };
 
         if (targetPlatform === 'INSTAGRAM') {
@@ -127,7 +123,7 @@ export class PreparePostService {
           }
           metaPost.instagramBusinessId = pageAccount.instagramBusinessId;
         }
-        console.log(metaPost)
+        console.log(metaPost);
 
         return metaPost;
       }
@@ -144,7 +140,6 @@ export class PreparePostService {
         accessToken: fallbackToken,
         platformAccountId: post.socialAccount.platformAccountId,
         metadata: post.metadata,
-
       };
     } catch (error) {
       this.logger.error(
@@ -155,35 +150,33 @@ export class PreparePostService {
     }
   }
 
-private async prepareTwitterPlatformPost(
+  private async prepareTwitterPlatformPost(
     basePost: BaseScheduledPost,
     post: any,
     // Note: You need to fetch accessSecret here too
   ): Promise<TwitterScheduledPost> {
-    
     if (!post.socialAccount.accessToken || !post.socialAccount.accessSecret) {
-       throw new UnauthorizedException('Missing Twitter credentials');
+      throw new UnauthorizedException('Missing Twitter credentials');
     }
 
     const [token, secret] = await Promise.all([
-       this.encryptionService.decrypt(post.socialAccount.accessToken),
-       this.encryptionService.decrypt(post.socialAccount.accessSecret)
+      this.encryptionService.decrypt(post.socialAccount.accessToken),
+      this.encryptionService.decrypt(post.socialAccount.accessSecret),
     ]);
 
     return {
       ...basePost,
       platform: Platform.X,
-      accessToken: `${token}:${secret}`, 
+      accessToken: `${token}:${secret}`,
       accountId: post.socialAccount.platformAccountId,
     };
   }
 
-private prepareLinkedInPlatformPost(
+  private prepareLinkedInPlatformPost(
     basePost: BaseScheduledPost,
     post: any,
     accessToken: string,
   ): LinkedInScheduledPost {
-    
     let targetUrnOrId: string;
 
     if (post.pageAccountId && post.pageAccount) {
@@ -195,7 +188,9 @@ private prepareLinkedInPlatformPost(
     } else {
       // CASE B: Posting to Personal Profile
       if (!post.socialAccount.platformAccountId) {
-        throw new BadRequestException('Social account missing platformAccountId');
+        throw new BadRequestException(
+          'Social account missing platformAccountId',
+        );
       }
       targetUrnOrId = post.socialAccount.platformAccountId;
     }
@@ -206,33 +201,6 @@ private prepareLinkedInPlatformPost(
       accessToken,
       accountId: targetUrnOrId,
     };
-  }
-
-  private async getMediaFiles(mediaIds: string[]): Promise<string[]> {
-    if (!mediaIds.length) return [];
-
-    try {
-      const mediaFiles = await this.prisma.mediaFile.findMany({
-        where: { id: { in: mediaIds } },
-        select: { url: true },
-      });
-
-      if (mediaFiles.length !== mediaIds.length) {
-        const foundIds = mediaFiles.map((f) => f.url);
-        const missingCount = mediaIds.length - mediaFiles.length;
-        this.logger.warn(
-          `${missingCount} media file(s) not found. Requested: ${mediaIds.length}, Found: ${mediaFiles.length}`,
-        );
-      }
-
-      return mediaFiles.map((f) => f.url);
-    } catch (error) {
-      this.logger.error(
-        `Failed to fetch media files for IDs: ${mediaIds.join(', ')}`,
-        error.stack,
-      );
-      throw new InternalServerErrorException('Failed to fetch media files');
-    }
   }
 
   private async decryptToken(
