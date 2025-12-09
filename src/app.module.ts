@@ -10,7 +10,7 @@ import { MailModule } from './mail/mail.module';
 import { RedisModule } from './redis/redis.module';
 import { PostsModule } from './posts/posts.module';
 import { APP_GUARD } from '@nestjs/core';
-import { JwtAuthGuard } from './auth/guards/jwt-auth.guard';
+import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
 import { UserModule } from './user/user.module';
 import { ApprovalsModule } from './approvals/approvals.module';
 import { BillingModule } from './billing/billing.module';

@@ -22,7 +22,7 @@ import { EnhanceContentDto } from './dtos/enhance-content.dto';
 import { GenerateImageDto } from './dtos/generate-image.dto';
 import { AiImageService } from './services/ai-image.service';
 import { AiUsageService } from './services/ai-usage.service';
-import { CurrentUser } from '@/auth/decorators/current-user.decorator';
+import { CurrentUser } from '@/common/decorators/current-user.decorator';
 import { RateLimit } from '@/common/decorators/rate-limit.decorator';
 
 @ApiTags('AI')
