@@ -1,5 +1,5 @@
 generator client {
- provider = "prisma-client"
+  provider = "prisma-client"
   output   = "../generated/prisma"
 }
 
@@ -8,14 +8,14 @@ datasource db {
 }
 
 model User {
-  id        String   @id @default(cuid())
-  email     String   @unique
-  password  String? // Optional for OAuth users
-  firstName String?
-  lastName  String?
-  avatar    String?
-  systemRoleId String?  
-  systemRole   Role?    @relation("UserSystemRole", fields: [systemRoleId], references: [id])
+  id           String  @id @default(cuid())
+  email        String  @unique
+  password     String? // Optional for OAuth users
+  firstName    String?
+  lastName     String?
+  avatar       String?
+  systemRoleId String?
+  systemRole   Role?   @relation("UserSystemRole", fields: [systemRoleId], references: [id])
 
   // Email verification
   isEmailVerified         Boolean   @default(false)
@@ -377,7 +377,7 @@ model OrganizationInvitation {
   email          String
   organizationId String
   invitedBy      String?
-  role           OrganizationRole @default(MEMBER)
+  roleId         String
   status         InvitationStatus @default(PENDING)
   token          String           @unique
   expiresAt      DateTime
@@ -385,6 +385,7 @@ model OrganizationInvitation {
   updatedAt      DateTime         @updatedAt
   resentAt       DateTime?
 
+  role         Role         @relation(fields: [roleId], references: [id])
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   inviter      User?        @relation("UserSentInvitations", fields: [invitedBy], references: [id], onDelete: SetNull)
 
@@ -959,11 +960,12 @@ model Role {
   scope          RoleScope
 
   // Relations
-  organization         Organization?         @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  systemUsers          User[]                @relation("UserSystemRole")
-  permissions          RolePermission[]
-  organizationMembers  OrganizationMember[]
-  socialAccountMembers SocialAccountMember[]
+  organization            Organization?            @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  systemUsers             User[]                   @relation("UserSystemRole")
+  permissions             RolePermission[]
+  organizationMembers     OrganizationMember[]
+  socialAccountMembers    SocialAccountMember[]
+  organizationInvitations OrganizationInvitation[]
 
   @@unique([scope, organizationId, name])
   @@index([isSystem, isDefault])
@@ -1003,7 +1005,7 @@ enum RoleScope {
 enum QueueStatus {
   PENDING
   QUEUED
-  PROCESSING         
+  PROCESSING
   COMPLETED
   FAILED
   RETRYING
@@ -1044,19 +1046,12 @@ enum PlanStatus {
   TRIALING
 }
 
-enum OrganizationRole {
-  OWNER // Full access, can delete org
-  ADMIN // Manage members, billing, settings
-  EDITOR // Create content, schedule posts
-  ANALYST // View analytics only
-  MEMBER // Basic access
-}
-
 enum InvitationStatus {
   PENDING
   ACCEPTED
   EXPIRED
   REVOKED
+  DECLINED
 }
 
 enum AuditAction {
@@ -1093,6 +1088,7 @@ enum ScheduleJobStatus {
   PUBLISHED
   RETRYING
 }
+
 enum ContentType {
   POST
   STORY
@@ -1217,6 +1213,13 @@ enum PermissionResource {
   // Team resources
   INVITATIONS
   AUDIT_LOGS
+
+  AI_CONTENT
+  AI_USAGE
+  TEMPLATE
+  SCHEDULE
+  CALENDAR
+  INBOX
 }
 
 enum PermissionAction {
@@ -1227,6 +1230,7 @@ enum PermissionAction {
   MANAGE
   APPROVE
   PUBLISH
+  EXPORT
 }
 
 enum TemplateCategory {

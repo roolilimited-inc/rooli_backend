@@ -3,94 +3,61 @@ import {
   CanActivate,
   ExecutionContext,
   ForbiddenException,
-  BadRequestException,
+  UnauthorizedException,
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
-import { AuthenticatedUser } from '../decorators/permissions.decorator';
+import { RoleService } from '@/access-control/services/roles.service';
 
 @Injectable()
 export class SocialAccountGuard implements CanActivate {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly roleService: RoleService,
+  ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const request = context.switchToHttp().getRequest();
-    const user: AuthenticatedUser = request.user;
+    const user = request.user;
+    const accountId = request.params.accountId || request.body.accountId;
 
-    if (!user) {
-      return false;
-    }
+    if (!accountId)
+      throw new ForbiddenException('Social account ID not provided');
 
-    const socialAccountId = request.params.socialAccountId || request.body.socialAccountId;
-    const organizationId = request.params.organizationId || request.body.organizationId;
-
-    if (!socialAccountId) {
-      throw new BadRequestException('Social Account ID is required');
-    }
-
-    // First check if user has access to the social account directly
-    const socialAccountMembership = await this.prisma.socialAccountMember.findUnique({
+    const membership = await this.prisma.socialAccountMember.findUnique({
       where: {
         socialAccountId_userId: {
-          socialAccountId,
+          socialAccountId: accountId,
           userId: user.id,
         },
       },
-      select: {
-        isActive: true,
-        socialAccount: {
-          select: {
-            organizationId: true,
-          },
-        },
-      },
+      select: { roleId: true, isActive: true },
     });
 
-    if (socialAccountMembership?.isActive) {
-      return true;
+    if (!membership || !membership.isActive) {
+      throw new UnauthorizedException(
+        'User is not a member of this social account',
+      );
     }
 
-    // If no direct access, check organization membership
-    if (!organizationId) {
-      // Try to get organization from social account
-      const socialAccount = await this.prisma.socialAccount.findUnique({
-        where: { id: socialAccountId },
-        select: { organizationId: true },
-      });
+    // Hydrate the Role (fetch permissions)
+    const role = await this.roleService.getRoleById(membership.roleId);
 
-      if (!socialAccount) {
-        throw new ForbiddenException('Social account not found');
-      }
 
-      request.params.organizationId = socialAccount.organizationId;
+    // If the user has the System "Super Admin" role, bypass all checks.
+    if (user?.systemRole?.name === 'super_admin') {
+       return true; // Access Granted immediately
+    }
+    
+    // Also check if the *current context role* is an owner (optional)
+    if (role?.name === 'owner' && role?.isSystem) {
+       return true; // Owners can do everything in their Org
     }
 
-    // Check organization membership
-    const orgMembership = await this.prisma.organizationMember.findUnique({
-      where: {
-        organizationId_userId: {
-          organizationId: organizationId || socialAccountMembership?.socialAccount.organizationId,
-          userId: user.id,
-        },
-      },
-      select: {
-        isActive: true,
-        role: {
-          select: {
-            name: true,
-          },
-        },
-      },
-    });
 
-    if (!orgMembership?.isActive) {
-      throw new ForbiddenException('User does not have access to this social account');
-    }
+    // Attach to request for PermissionsGuard
+    request.currentRole = role;
+    request.socialAccountId = accountId;
 
-    // Organization owners and editors have access to all social accounts in the organization
-    if (['owner', 'editor'].includes(orgMembership.role.name)) {
-      return true;
-    }
-
-    throw new ForbiddenException('Insufficient permissions for this social account');
+    return true;
   }
 }
