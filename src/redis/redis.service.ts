@@ -9,6 +9,19 @@ export class RedisService {
     return this.client.get(key);
   }
 
+async scan(pattern: string, count = 100): Promise<string[]> {
+  let cursor = '0';
+  const keys: string[] = [];
+
+  do {
+    const [nextCursor, results] = await this.client.scan(cursor, 'MATCH', pattern, 'COUNT', count);
+    cursor = nextCursor;
+    keys.push(...results);
+  } while (cursor !== '0');
+
+  return keys;
+}
+
   async set(key: string, value: string, ttlSeconds?: number): Promise<'OK'> {
     if (ttlSeconds) {
       return this.client.set(key, value, 'EX', ttlSeconds);

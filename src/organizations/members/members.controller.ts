@@ -17,7 +17,7 @@ import {
   ApiOperation,
   ApiResponse,
 } from '@nestjs/swagger';
-import { JwtAuthGuard } from '@/auth/guards/jwt-auth.guard';
+import { JwtAuthGuard } from '@/common/guards/jwt-auth.guard';
 import { AddOrganizationMemberDto } from './dtos/add-organization-member.dto';
 
 @ApiTags('Organization Members')

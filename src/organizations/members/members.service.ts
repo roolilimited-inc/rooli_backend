@@ -72,11 +72,6 @@ export class MembersService {
       include: { user: true },
     });
 
-    await this.logAuditEvent(orgId, updaterId, 'member_updated', {
-      updatedMemberId: memberId,
-      updates: dto,
-    });
-
     return this.toSafeMember(updated);
   }
 
@@ -171,11 +166,6 @@ export class MembersService {
       include: { user: true },
     });
 
-    await this.logAuditEvent(orgId, removerId, 'member_removed', {
-      removedMemberId: memberId,
-      removedMemberEmail: updatedMember.user?.email,
-    });
-
     return this.toSafeMember(updatedMember);
   }
 
@@ -194,10 +184,6 @@ export class MembersService {
     await this.prisma.organizationMember.update({
       where: { id: membership.id },
       data: { isActive: false },
-    });
-
-    await this.logAuditEvent(orgId, userId, 'member_left', {
-      memberId: membership.id,
     });
 
     return { success: true, message: 'Successfully left organization' };
@@ -230,22 +216,6 @@ export class MembersService {
   }
 
 
-  private async logAuditEvent(
-    orgId: string,
-    userId: string,
-    action: string,
-    details: any,
-  ) {
-    await this.prisma.auditLog.create({
-      data: {
-        organizationId: orgId,
-        userId: userId,
-        action: action,
-        resourceType: 'member',
-        details: details,
-      },
-    });
-  }
 
   private toSafeMember(member: any) {
     return {

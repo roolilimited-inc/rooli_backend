@@ -22,6 +22,13 @@ export class OrganizationGuard implements CanActivate {
 
     if (!orgId) throw new ForbiddenException('Organization ID not provided');
 
+    // If super admin, we skip membership checks entirely
+    if (user?.systemRole?.name === 'super_admin') {
+      request.organizationId = orgId;
+      return true; 
+    }
+
+    // Check Membership
     const membership = await this.prisma.organizationMember.findUnique({
       where: { 
         organizationId_userId: { organizationId: orgId, userId: user.id } 
@@ -29,26 +36,14 @@ export class OrganizationGuard implements CanActivate {
       select: { roleId: true, isActive: true }
     });
 
-    // 2. Validate Membership
     if (!membership || !membership.isActive) {
       throw new UnauthorizedException('User is not a member of this organization');
     }
 
-    const role = await this.roleService.getRoleById(membership.roleId, orgId);
+    // 3. Fetch Role (Fixed Signature)
+    const role = await this.roleService.getRoleById(membership.roleId);
 
-
-    // If the user has the System "Super Admin" role, bypass all checks.
-    if (user?.systemRole?.name === 'super_admin') {
-       return true; // Access Granted immediately
-    }
-    
-    // Also check if the *current context role* is an owner (optional)
-    if (role?.name === 'owner' && role?.isSystem) {
-       return true; // Owners can do everything in their Org
-    }
-
-
-    //  Attach to Request
+    //Attach to Request
     request.currentRole = role; 
     request.organizationId = orgId;
 

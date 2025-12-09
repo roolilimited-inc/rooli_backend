@@ -5,11 +5,11 @@ import {
   CreateCheckoutSessionDto,
   BillingPortalSessionDto,
 } from './types/billing.types';
-import { JwtAuthGuard } from '@/auth/guards/jwt-auth.guard';
+import { JwtAuthGuard } from '@/common/guards/jwt-auth.guard';
 import { OrganizationGuard } from '@/common/guards/organization.guard';
 
 @Controller('billing')
-@UseGuards(JwtAuthGuard)
+
 export class BillingController {
   constructor(
     private readonly billingService: BillingService,
@@ -17,7 +17,6 @@ export class BillingController {
   ) {}
 
   @Post('checkout-session')
-  @UseGuards(OrganizationGuard)
   createCheckoutSession(
     @Req() req,
     @Body() createCheckoutSessionDto: CreateCheckoutSessionDto,
@@ -29,7 +28,6 @@ export class BillingController {
   }
 
   @Post('portal-session')
-  @UseGuards(OrganizationGuard)
   createBillingPortalSession(
     @Req() req,
     @Body() billingPortalSessionDto: BillingPortalSessionDto,
@@ -41,13 +39,11 @@ export class BillingController {
   }
 
   @Get('overview')
-  @UseGuards(OrganizationGuard)
   getBillingOverview(@Req() req) {
     return this.billingService.getBillingOverview(req.organization.id);
   }
 
   @Post('usage')
-  @UseGuards(OrganizationGuard)
   recordUsage(@Req() req, @Body() recordUsageDto: RecordUsageDto) {
     return this.billingService.recordUsage(req.organization.id, recordUsageDto);
   }

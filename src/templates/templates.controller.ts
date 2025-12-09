@@ -22,7 +22,7 @@ import { GenerateFromTemplateDto } from './dtos/generate-from-template.dto';
 import { UpdateTemplateDto } from './dtos/update-template.dto';
 import { TemplateFilterDto } from './dtos/get-org-templates.dto';
 import { GetSystemTemplatesDto } from './dtos/get-system-template.dto';
-import { JwtAuthGuard } from '@/auth/guards/jwt-auth.guard';
+import { JwtAuthGuard } from '@/common/guards/jwt-auth.guard';
 
 @ApiTags('Content Templates')
 @ApiBearerAuth()

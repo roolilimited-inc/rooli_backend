@@ -27,15 +27,13 @@ export class PermissionsGuard implements CanActivate {
     const request = context.switchToHttp().getRequest();
     const role = request.currentRole;
 
-    // If the user has the System "Super Admin" role, bypass all checks.
-    const user = request.user; // From JwtAuthGuard
+    const user = request.user;
     if (user?.systemRole?.name === 'super_admin') {
-       return true; // Access Granted immediately
+       return true;
     }
-    
-    // Also check if the *current context role* is an owner (optional)
+
     if (role?.name === 'owner' && role?.isSystem) {
-       return true; // Owners can do everything in their Org
+       return true;
     }
 
     if (!role) {
@@ -44,10 +42,9 @@ export class PermissionsGuard implements CanActivate {
       );
     }
 
-    // Map Prisma structure: Role -> RolePermission[] -> Permission
     const userPermissions = role.permissions.map((p) => p.permission);
 
-    // The Comparison Logic
+
     const hasAccess = requiredPermissions.every((required) =>
       userPermissions.some(
         (userPerm) =>

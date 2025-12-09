@@ -14,7 +14,7 @@ import { WebhookService } from './webhook.service';
 import { Response, Request } from 'express';
 import { IncomingHttpHeaders } from 'http';
 import { WebhookQueueService } from './queues/webhook-queue.service';
-import { Public } from '@/auth/decorators/public.decorator';
+import { Public } from '@/common/decorators/public.decorator';
 import { Platform } from '@generated/enums';
 
 /**

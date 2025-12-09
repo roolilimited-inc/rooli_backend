@@ -1,23 +1,22 @@
 
-import { IsEmail, IsEnum, IsOptional, IsString } from 'class-validator';
+import { IsEmail, IsEnum, IsNotEmpty, IsOptional, IsString } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { OrganizationRole } from '@generated/enums';
 
 export class InviteMemberDto {
   @ApiProperty({
     example: 'jane.doe@example.com',
     description: 'Email address of the user to invite',
   })
+  @IsNotEmpty()
   @IsEmail()
   email: string;
 
   @ApiProperty({
-    enum: OrganizationRole,
-    example: OrganizationRole.MEMBER,
+    example: 'MEMBER',
     description: 'Role to assign to the invited member',
   })
-  @IsEnum(OrganizationRole)
-  role: OrganizationRole;
+  @IsNotEmpty()
+  role: string;
 
   @ApiPropertyOptional({
     example: 'Welcome to our team! Excited to collaborate with you.',

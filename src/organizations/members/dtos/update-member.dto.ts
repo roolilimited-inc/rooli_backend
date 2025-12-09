@@ -1,4 +1,3 @@
-// src/organizations/members/dto/update-member.dto.ts
 import { IsOptional, IsBoolean, IsString } from 'class-validator';
 import { ApiPropertyOptional } from '@nestjs/swagger';
 
@@ -6,8 +5,7 @@ export class UpdateMemberDto {
   @IsOptional()
   @IsString()
   roleId?: string;
-
-  
+ 
   @ApiPropertyOptional({
     example: true,
     description: 'Flag to activate or deactivate the member',

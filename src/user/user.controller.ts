@@ -21,8 +21,8 @@ import { ChangePasswordDto } from './dtos/change-password.dto';
 import { UpdateProfileDto } from './dtos/update-profile.dto';
 import { UserFiltersDto } from './dtos/user-filters.dto';
 import { SafeUser } from '@/auth/dtos/AuthResponse.dto';
-import { JwtAuthGuard } from '@/auth/guards/jwt-auth.guard';
-import { CurrentUser } from '@/auth/decorators/current-user.decorator';
+import { JwtAuthGuard } from '@/common/guards/jwt-auth.guard';
+import { CurrentUser } from '@/common/decorators/current-user.decorator';
 
 @ApiTags('Users')
   @ApiBearerAuth()
