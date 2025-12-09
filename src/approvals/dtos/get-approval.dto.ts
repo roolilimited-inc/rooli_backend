@@ -1,6 +1,5 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { IsEnum, IsNumber, IsOptional, IsString, Min } from 'class-validator';
-import { Type } from 'class-transformer';
 import { PaginationDto } from '@/common/dtos/pagination.dto';
 import { ApprovalStatus } from '@generated/enums';
 
