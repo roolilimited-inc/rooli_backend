@@ -1192,6 +1192,7 @@ enum PermissionScope {
 }
 
 enum PermissionResource {
+  ALL
   SYSTEM
   // Organization resources
   ORGANIZATION
@@ -1223,6 +1224,7 @@ enum PermissionResource {
 }
 
 enum PermissionAction {
+  ALL
   CREATE
   READ
   UPDATE

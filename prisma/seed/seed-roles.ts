@@ -1,62 +1,76 @@
 import slugify from 'slugify';
-import { prisma, hasColumn } from './utils';
-import {
-  RoleScope,
-} from '../../generated/prisma/client';
+import { prisma} from './utils';
+import { RoleScope } from '../../generated/prisma/client';
 
 export const SYSTEM_ROLES = [
   {
     name: 'admin',
     displayName: 'Admin',
-    description: 'Full access',
+    description: 'Full system access',
     scope: RoleScope.SYSTEM,
     isSystem: true,
-    permissions: ['SYSTEM:ADMIN:MANAGE'],
+    isDefault: false,
+    permissions: ['SYSTEM:SYSTEM:MANAGE'],
   },
   {
     name: 'user',
     displayName: 'User',
-    description: 'Basic user',
+    description: 'Basic user access',
     scope: RoleScope.SYSTEM,
     isSystem: true,
     isDefault: true,
-    permissions: ['SYSTEM:USER:READ'],
+    permissions: ['ORGANIZATION:MEMBERS:READ'],
+  },
+  {
+    name: 'owner',
+    displayName: 'Owner',
+    description: 'Full control of the organization',
+    scope: RoleScope.ORGANIZATION,
+    isSystem: true,
+    isDefault: false,
+    permissions: [
+      'ORGANIZATION:ORGANIZATION:MANAGE',
+      'ORGANIZATION:SETTINGS:UPDATE',
+      'ORGANIZATION:BILLING:MANAGE',
+      'ORGANIZATION:MEMBERS:CREATE',
+      'ORGANIZATION:MEMBERS:MANAGE',
+      'ORGANIZATION:MEMBERS:READ',
+      'ORGANIZATION:INTEGRATION:MANAGE',
+    ],
   },
 ];
 
 export async function seedRoles(permissionMap: Map<string, string>) {
-  const useSlug = await hasColumn('role', 'slug');
-
-  for (const r of SYSTEM_ROLES) {
-    let role = await prisma.role.findFirst({
-      where: { name: r.name, scope: r.scope, organizationId: null },
+  for (const role of SYSTEM_ROLES) {
+    let dbRole = await prisma.role.findFirst({
+      where: { name: role.name, scope: role.scope, organizationId: null },
     });
 
-    if (!role) {
-      role = await prisma.role.create({
+    if (!dbRole) {
+      dbRole = await prisma.role.create({
         data: {
-          name: r.name,
-          displayName: r.displayName,
-          description: r.description,
-          scope: r.scope,
+          name: role.name,
+          displayName: role.displayName,
+          description: role.description,
+          scope: role.scope,
+          isSystem: role.isSystem,
+          isDefault: role.isDefault ?? false,
           organizationId: null,
-          isSystem: r.isSystem,
-          isDefault: r.isDefault,
-          ...(useSlug ? { slug: slugify(r.name, { lower: true }) } : {}),
         },
       });
     }
 
-    const rpData = r.permissions.map((code) => {
-      const permissionId = permissionMap.get(code);
-      return permissionId
-        ? { roleId: role!.id, permissionId }
-        : null;
-    }).filter(Boolean);
+    // Prepare role-permission mapping
+    const rolePermissions = role.permissions
+      .map((code) => {
+        const id = permissionMap.get(code);
+        return id ? { roleId: dbRole!.id, permissionId: id } : null;
+      })
+      .filter(Boolean);
 
-    if (rpData.length > 0) {
+    if (rolePermissions.length > 0) {
       await prisma.rolePermission.createMany({
-        data: rpData as any,
+        data: rolePermissions as any,
         skipDuplicates: true,
       });
     }
