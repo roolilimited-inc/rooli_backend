@@ -390,7 +390,6 @@ model OrganizationInvitation {
   inviter      User?        @relation("UserSentInvitations", fields: [invitedBy], references: [id], onDelete: SetNull)
 
   message     String?
-  permissions Json?
 
   @@unique([email, organizationId, status]) // Allow re-invite after expiration
   @@index([token])
