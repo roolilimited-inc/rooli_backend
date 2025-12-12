@@ -510,6 +510,106 @@ export class AuthService {
     }
   }
 
+  async handleSocialLogin(googleUser: { email: string; firstName: string; lastName: string; picture: string }) {
+  try {
+    const lowerEmail = googleUser.email.toLowerCase();
+
+    //  Check if user exists
+    let user = await this.prisma.user.findUnique({
+      where: { email: lowerEmail },
+      include: {
+        systemRole: { select: { name: true } },
+        lastActiveOrganization: { select: { id: true } },
+        organizationMemberships: { take: 1, select: { organizationId: true } }
+      }
+    });
+
+    //  If User exists, just log them in
+    if (user) {
+      // Determine active Org
+      let activeOrgId = user.lastActiveOrganization?.id || user.organizationMemberships[0]?.organizationId;
+      
+      if (!activeOrgId) throw new ForbiddenException('User exists but has no active workspace.');
+
+      const tokens = await this.generateTokens(user.id, user.email, activeOrgId, user.refreshTokenVersion);
+      const refreshHash = await argon2.hash(tokens.refreshToken);
+
+      await this.prisma.user.update({
+        where: { id: user.id },
+        data: { 
+          refreshToken: refreshHash, 
+          lastActiveAt: new Date(),
+          isEmailVerified: true,
+          // If they didn't have an avatar, update it from Google
+          avatar: user.avatar || googleUser.picture 
+        },
+      });
+
+      return { user: this.toSafeUser(user), ...tokens };
+    }
+
+    // If User DOES NOT exist, Register them automatically
+    // We need to auto-generate a Company Name since Google doesn't give us one.
+    const companyName = `${googleUser.firstName}'s Workspace`;
+    const slug = slugify(companyName, { lower: true, strict: true }) + '-' + Math.floor(Math.random() * 1000);
+    
+    // Fetch Roles 
+    const [systemRole, orgOwnerRole] = await Promise.all([
+      this.prisma.role.findFirst({ where: { name: 'user', scope: 'SYSTEM' } }),
+      this.prisma.role.findFirst({ where: { name: 'owner', scope: 'ORGANIZATION' } }),
+    ]);
+
+    // Transaction: Create User + Org + Member
+    const result = await this.prisma.$transaction(async (tx) => {
+      const newUser = await tx.user.create({
+        data: {
+          email: lowerEmail,
+          // Generate a random high-entropy password so they can't login via password yet (unless they reset it)
+          password: await argon2.hash(crypto.randomBytes(32).toString('hex')), 
+          firstName: googleUser.firstName,
+          lastName: googleUser.lastName,
+          avatar: googleUser.picture,
+          isEmailVerified: true, 
+          systemRoleId: systemRole.id,
+          lastPasswordChange: new Date(),
+        },
+        include: { systemRole: { select: { name: true } } }
+      });
+
+      const newOrg = await tx.organization.create({
+        data: {
+          name: companyName,
+          slug: slug,
+          planTier: 'FREE',
+          members: {
+            create: {
+              userId: newUser.id,
+              roleId: orgOwnerRole.id,
+            },
+          },
+        },
+      });
+
+      return { user: newUser, org: newOrg };
+    });
+
+    // Generate Tokens
+    const tokens = await this.generateTokens(result.user.id, result.user.email, result.org.id, 0);
+    const refreshHash = await argon2.hash(tokens.refreshToken);
+
+    // Save Refresh Token
+    await this.prisma.user.update({
+      where: { id: result.user.id },
+      data: { refreshToken: refreshHash, lastActiveOrgId: result.org.id },
+    });
+    return { user: this.toSafeUser(result.user), ...tokens };
+
+  } catch (error) {
+    this.logger.error(error);
+    throw new InternalServerErrorException('Google login failed');
+  }
+}
+
   private async generateTokens(userId: string, email: string, orgId: string, version: number) {
     const payload: JwtPayload = {
       sub: userId,

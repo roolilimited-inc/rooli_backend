@@ -1,7 +1,18 @@
-import { Body, Controller, Get, Param, Post, Query, Req, Res } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Param,
+  Post,
+  Query,
+  Req,
+  Res,
+  UseGuards,
+} from '@nestjs/common';
 import {
   ApiBearerAuth,
   ApiBody,
+  ApiOkResponse,
   ApiOperation,
   ApiParam,
   ApiQuery,
@@ -18,6 +29,7 @@ import { Register } from './dtos/Register.dto';
 import { ResetPassword } from './dtos/ResetPassword.dto';
 import { Public } from '../common/decorators/public.decorator';
 import { User } from '@generated/client';
+import { AuthGuard } from '@nestjs/passport';
 
 @ApiTags('Authentication')
 @Controller('auth')
@@ -48,7 +60,6 @@ export class AuthController {
   async login(@Body() loginDto: Login) {
     return this.authService.login(loginDto);
   }
-
 
   @Post('refresh')
   @Public()
@@ -137,7 +148,6 @@ export class AuthController {
     };
   }
 
-
   @Get('profile')
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Get current user profile' })
@@ -166,12 +176,45 @@ export class AuthController {
     };
   }
 
-@Post('logout')
-@ApiOperation({ summary: 'Logout the current user' })
-@ApiResponse({ status: 200, description: 'Logged out successfully.' })
-@ApiResponse({ status: 401, description: 'Unauthorized.' })
-async logout(@Req() req: any) {
-  await this.authService.logout(req.user.id);
-  return { message: 'Logged out successfully' };
-}
+  @Get('google')
+  @Public()
+  @UseGuards(AuthGuard('google'))
+  @ApiOperation({
+    summary: 'Initiate Google OAuth Login',
+    description:
+      'Redirects the user to Google for authentication. No response body is returned; Google handles the redirect.',
+  })
+  @ApiResponse({
+    status: 302,
+    description: 'Redirects to Google OAuth consent screen.',
+  })
+  googleAuth(@Req() req) {
+    // Guard handles redirect
+  }
+
+  @Get('google/callback')
+  @Public()
+  @UseGuards(AuthGuard('google'))
+  @ApiOperation({
+    summary: 'Google OAuth Callback',
+    description:
+      'Google redirects here after login. The returned user data is processed, and tokens are generated.',
+  })
+  @ApiOkResponse({
+    description: 'Successfully authenticated using Google',
+  })
+  async googleAuthRedirect(@Req() req) {
+    const result = await this.authService.handleSocialLogin(req.user);
+    // Return JSON or redirect to frontend
+    return result;
+  }
+
+  @Post('logout')
+  @ApiOperation({ summary: 'Logout the current user' })
+  @ApiResponse({ status: 200, description: 'Logged out successfully.' })
+  @ApiResponse({ status: 401, description: 'Unauthorized.' })
+  async logout(@Req() req: any) {
+    await this.authService.logout(req.user.id);
+    return { message: 'Logged out successfully' };
+  }
 }

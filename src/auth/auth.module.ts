@@ -8,6 +8,7 @@ import { ThrottlerModule } from '@nestjs/throttler';
 import { JwtStrategy } from './strategies/jwt.strategy';
 import { MailService } from '@/mail/mail.service';
 import { PrismaService } from '@/prisma/prisma.service';
+import { GoogleStrategy } from './strategies/google.strategy';
 
 @Module({
   imports: [
@@ -39,6 +40,7 @@ ThrottlerModule.forRoot({
     MailService,
     JwtStrategy,
     JwtService,
+    GoogleStrategy
   ],
   exports:[JwtService]
 })
