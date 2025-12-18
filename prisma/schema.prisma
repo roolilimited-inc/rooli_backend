@@ -451,7 +451,7 @@ model Plan {
 
   // COST (For display in your UI)
   price    Decimal @db.Decimal(10, 2)
-  currency String  @default("NGN") // or USD, KES
+  currency String  @default("NGN") 
   interval String // "monthly", "yearly"
 
   // LIMITS (The "Guards")
