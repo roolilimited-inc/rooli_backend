@@ -47,6 +47,16 @@ export class AuthService {
     this.validatePasswordStrength(password);
     const hashedPassword = await argon2.hash(password);
 
+    // Fetch the "user" role with scope "system"
+  const role = await this.prisma.role.findFirst({
+    where: { name: 'user', scope: 'SYSTEM' },
+  });
+  if (!role) {
+    throw new InternalServerErrorException(
+      "Default role 'user' with scope not found"
+    );
+  }
+
     //  Create User (No Org yet)
     const newUser = await this.prisma.user.create({
       data: {
@@ -55,8 +65,12 @@ export class AuthService {
         firstName: firstName?.trim(),
         lastName: lastName?.trim(),
         timezone,
+        systemRoleId: role.id,
         userType: 'INDIVIDUAL',
       },
+      include: {
+        systemRole: true,
+      }
     });
 
     //  Generate "Onboarding Token" (Org ID is NULL)
