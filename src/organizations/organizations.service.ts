@@ -45,11 +45,11 @@ export class OrganizationsService {
     if (!user) throw new NotFoundException('User not found');
 
     const ownedOrgCount = user.organizationMemberships.length;
-    // if (user.userType === 'INDIVIDUAL' && ownedOrgCount >= 1) {
-    //   throw new ForbiddenException({
-    //     message: 'Individual accounts are limited to 1 Workspace. Please upgrade to Agency.',
-    //   });
-    // }
+    if (user.userType === 'INDIVIDUAL' && ownedOrgCount >= 1) {
+      throw new ForbiddenException({
+        message: 'Individual accounts are limited to 1 Workspace. Please upgrade to Agency.',
+      });
+    }
 
     // 3. Prepare Slug (Respect DTO, Fallback to Name)
     let slug = dto.slug;
@@ -84,18 +84,18 @@ export class OrganizationsService {
         const ownerRole = await tx.role.findFirst({ where: { name: 'owner' } });
         if (!ownerRole) throw new InternalServerErrorException("Role 'owner' missing");
 
-        // await tx.organizationMember.create({
-        //   data: {
-        //     organizationId: org.id,
-        //     userId,
-        //     roleId: ownerRole.id,
-        //     invitedBy: userId,
-        //   },
-        // });
+        await tx.organizationMember.create({
+          data: {
+            organizationId: org.id,
+            userId,
+            roleId: ownerRole.id,
+            invitedBy: userId,
+          },
+        });
 
-        // await tx.brandKit.create({
-        //   data: { organizationId: org.id, name: `${dto.name} Brand Kit` },
-        // });
+        await tx.brandKit.create({
+          data: { organizationId: org.id, name: `${dto.name} Brand Kit` },
+        });
 
         return org;
       });
