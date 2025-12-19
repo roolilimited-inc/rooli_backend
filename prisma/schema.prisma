@@ -8,16 +8,16 @@ datasource db {
 }
 
 model User {
-  id           String  @id @default(cuid())
-  email        String  @unique
+  id           String   @id @default(cuid())
+  email        String   @unique
   password     String? // Optional for OAuth users
   firstName    String?
   lastName     String?
   avatar       String?
-  userType    UserType  @default(INDIVIDUAL)
-  timezone     String? @default("Africa/Lagos")
+  userType     UserType @default(INDIVIDUAL)
+  timezone     String?  @default("Africa/Lagos")
   systemRoleId String?
-  systemRole   Role?   @relation("UserSystemRole", fields: [systemRoleId], references: [id])
+  systemRole   Role?    @relation("UserSystemRole", fields: [systemRoleId], references: [id])
 
   lastActiveOrgId        String?
   lastActiveOrganization Organization? @relation("UserLastActiveOrg", fields: [lastActiveOrgId], references: [id], onDelete: SetNull)
@@ -339,22 +339,22 @@ model MediaFile {
 }
 
 model Organization {
-  id                 String                   @id @default(cuid())
-  name               String
-  email              String?
-  timezone     String?                        @default("Africa/Lagos")
-  slug               String                   @unique
-  createdAt          DateTime                 @default(now())
-  updatedAt          DateTime                 @updatedAt
-  isActive           Boolean                  @default(true)
-  totalCreditsUsed   Int                      @default(0)
+  id               String   @id @default(cuid())
+  name             String
+  email            String?
+  timezone         String?  @default("Africa/Lagos")
+  slug             String   @unique
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+  isActive         Boolean  @default(true)
+  totalCreditsUsed Int      @default(0)
 
   status OrganizationStatus @default(PENDING_PAYMENT)
-  
-  members            OrganizationMember[]
-  invitations        OrganizationInvitation[]
-  socialAccounts     SocialAccount[]
-  mediaFiles         MediaFile[]
+
+  members        OrganizationMember[]
+  invitations    OrganizationInvitation[]
+  socialAccounts SocialAccount[]
+  mediaFiles     MediaFile[]
 
   usersWhoLastViewed User[] @relation("UserLastActiveOrg")
 
@@ -407,7 +407,7 @@ model OrganizationMember {
   role         Role         @relation(fields: [roleId], references: [id])
 
   createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt 
+  updatedAt DateTime @updatedAt
 
   @@unique([organizationId, userId])
   @@index([userId, isActive])
@@ -446,12 +446,12 @@ model Plan {
   name        String // "Starter", "Agency"
   description String?
 
-  // FLUTTERWAVE MAPPING
-  flutterwavePlanId String @unique // (e.g. "12345") - The ID from Flutterwave Dashboard
+  // PAYSTACK MAPPING
+  paystackPlanCode String @unique // (e.g. "12345") - The ID from Paystack Dashboard
 
   // COST (For display in your UI)
   price    Decimal @db.Decimal(10, 2)
-  currency String  @default("NGN") 
+  currency String  @default("NGN")
   interval String // "monthly", "yearly"
 
   // LIMITS (The "Guards")
@@ -478,9 +478,11 @@ model Subscription {
   planId String
   plan   Plan   @relation(fields: [planId], references: [id])
 
-  // FLUTTERWAVE DATA
-  flutterwaveId String @unique // The subscription ID (e.g. "4521")
-  status        String // active, cancelled, successful (Flutterwave statuses)
+ // PAYSTACK DATA
+  paystackSubscriptionCode String? // "SUB_vsyqdmlzble3uii"
+  emailToken               String? // "otk_54321"
+  authorizationCode        String? // "AUTH_8dfhgpkv"
+  status                   String // active, cancelled, successful (Paystack statuses)
 
   // TOKENIZATION (For charging card later if needed)
   cardToken         String? // "flw_t123..."
@@ -501,13 +503,15 @@ model Transaction {
   organizationId String
   organization   Organization @relation(fields: [organizationId], references: [id])
 
-  // FLUTTERWAVE REFS
-  txRef           String @unique // Your unique ref (e.g. "rooli_123_xyz")
-  flutterwaveTxId String // The global ID (e.g. "345678")
+  // TRANSACTION REFS
+  txRef        String @unique // Your internal ref (e.g. "rooli_org123_timestamp")
+  
+  providerTxId String 
+  provider     String @default("PAYSTACK") 
 
-  amount   Decimal
-  currency String
-  status   String // successful, failed
+  amount      Decimal @db.Decimal(10, 2)
+  currency    String
+  status      String // successful, failed, abandoned
 
   paymentDate DateTime @default(now())
 }
@@ -1019,7 +1023,7 @@ model RolePermission {
 
 enum UserType {
   INDIVIDUAL // Regular business (1 Org limit)
-  AGENCY     // Manages multiple clients (Multiple Orgs allowed)
+  AGENCY // Manages multiple clients (Multiple Orgs allowed)
 }
 
 enum PostStatus {
@@ -1087,8 +1091,8 @@ enum PlanStatus {
 
 enum OrganizationStatus {
   PENDING_PAYMENT // Created but not paid yet
-  ACTIVE          // Paid and running
-  SUSPENDED       // Ban or failed payments
+  ACTIVE // Paid and running
+  SUSPENDED // Ban or failed payments
 }
 
 enum InvitationStatus {
