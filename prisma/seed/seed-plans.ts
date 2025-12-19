@@ -76,5 +76,5 @@ export async function seedPlans() {
     });
   }
 
-  console.log('✅ Plans seeded successfully');
+  console.log('Plans seeded successfully');
 }
