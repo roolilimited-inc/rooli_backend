@@ -49,14 +49,6 @@ export class Register {
   role?: string;
 
   @ApiProperty({
-    description: 'Name of the organization',
-    example: 'Acme Corp',
-  })
-  @IsNotEmpty()
-  @IsString()
-  companyName: string;
-
-  @ApiProperty({
     description: 'Timezone of the user',
     example: 'Africa/Lagos',
   })
