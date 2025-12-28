@@ -4,8 +4,6 @@ import { BadRequestException, ValidationPipe, VersioningType } from '@nestjs/com
 import { SwaggerModule } from '@nestjs/swagger';
 import { swaggerConfig } from './config/swagger.config';
 import { PrismaExceptionFilter } from './common/filters/prisma-exception.filter';
-import { LoggerMiddleware } from './common/middlewares/logger.middleware';
-import * as bodyParser from 'body-parser';
 import { BullBoardModule } from './common/bull-boad/bull-board.module';
 import { AllExceptionsFilter } from './common/filters/all-exception-filter.filter';
 import { TransformInterceptor } from './common/interceptors/transform.interceptor';
@@ -15,7 +13,11 @@ async function bootstrap() {
     rawBody: true,
   });
 
-  app.enableCors();
+app.enableCors({
+  origin: true, // reflect request origin
+  credentials: true,
+});
+
   app.setGlobalPrefix('api');
 
   app.enableVersioning({
