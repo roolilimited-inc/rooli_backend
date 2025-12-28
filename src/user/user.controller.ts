@@ -5,6 +5,7 @@ import {
   Get,
   Param,
   Patch,
+  Post,
   Query,
   Req,
   UseGuards,
@@ -23,9 +24,10 @@ import { UserFiltersDto } from './dtos/user-filters.dto';
 import { SafeUser } from '@/auth/dtos/AuthResponse.dto';
 import { JwtAuthGuard } from '@/common/guards/jwt-auth.guard';
 import { CurrentUser } from '@/common/decorators/current-user.decorator';
+import { CreateOrganizationDto } from '@/organizations/dtos/create-organization.dto';
 
 @ApiTags('Users')
-  @ApiBearerAuth()
+@ApiBearerAuth()
 @Controller('users')
 export class UserController {
   constructor(private readonly usersService: UserService) {}
@@ -42,7 +44,7 @@ export class UserController {
     type: SafeUser,
   })
   async getCurrentUser(@Req() req): Promise<SafeUser> {
-    console.log(req)
+    console.log(req);
     return this.usersService.findById(req.user.id);
   }
 
@@ -98,12 +100,38 @@ export class UserController {
     return this.usersService.getUsersByOrganization(organizationId, filters);
   }
 
-
   @Get('me/social-accounts')
   @ApiOperation({ summary: "Get current user's accessible social accounts" })
   @ApiUnauthorizedResponse({ description: 'Unauthorized' })
   async getMySocialAccounts(@Req() req) {
     const userId = req.user?.id;
     return this.usersService.getUserSocialAccounts(userId);
+  }
+
+  @Post('onboarding')
+  @ApiOperation({
+    summary: 'User Onboarding',
+    description:
+      'Onboarding for the new user',
+  })
+  @ApiResponse({
+    status: 201,
+    description: 'User onboarded successfully',
+    schema: {
+      example: {
+        id: 'org-uuid',
+        name: 'Acme Corp',
+        slug: 'acme-corp',
+        timezone: 'UTC',
+        billingEmail: 'billing@acme.com',
+        planTier: 'FREE',
+        planStatus: 'ACTIVE',
+        maxMembers: 5,
+        monthlyCreditLimit: 1000,
+      },
+    },
+  })
+  async createOrganization(@Req() req, @Body() dto: CreateOrganizationDto) {
+    return this.usersService.userOnboarding(req.user.id, dto);
   }
 }

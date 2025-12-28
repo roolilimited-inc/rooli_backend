@@ -1,6 +1,9 @@
 import {
   BadRequestException,
+  ConflictException,
+  ForbiddenException,
   Injectable,
+  InternalServerErrorException,
   Logger,
   NotFoundException,
   UnauthorizedException,
@@ -12,11 +15,17 @@ import * as argon2 from 'argon2';
 import { SafeUser } from '@/auth/dtos/AuthResponse.dto';
 import { PrismaService } from '@/prisma/prisma.service';
 import { Prisma } from '@generated/client';
+import slugify from 'slugify';
+import { OnboardingDto } from './dtos/user-onboarding.dto';
+import { BillingService } from '@/billing/billing.service';
 
 @Injectable()
 export class UserService {
   private readonly logger = new Logger(UserService.name);
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly billingService: BillingService,
+  ) {}
 
   async findById(id: string): Promise<SafeUser | null> {
     const user = await this.prisma.user.findUnique({
@@ -41,19 +50,19 @@ export class UserService {
       },
     };
 
-     if (filters.search) {
-    // build the inner UserWhereInput
-    const userWhere: Prisma.UserWhereInput = {
-      deletedAt: null,
-      OR: [
-        { firstName: { contains: filters.search, mode: 'insensitive' } },
-        { lastName: { contains: filters.search, mode: 'insensitive' } },
-        { email: { contains: filters.search, mode: 'insensitive' } },
-      ],
-    };
+    if (filters.search) {
+      // build the inner UserWhereInput
+      const userWhere: Prisma.UserWhereInput = {
+        deletedAt: null,
+        OR: [
+          { firstName: { contains: filters.search, mode: 'insensitive' } },
+          { lastName: { contains: filters.search, mode: 'insensitive' } },
+          { email: { contains: filters.search, mode: 'insensitive' } },
+        ],
+      };
 
-    where.user = { is: userWhere };
-  }
+      where.user = { is: userWhere };
+    }
 
     // 3. Filter by Organization Role (Not System Role)
     if (filters.role) {
@@ -200,27 +209,26 @@ export class UserService {
   }
 
   async deactivateMyAccount(userId: string): Promise<void> {
-  const user = await this.prisma.user.findFirst({
-    where: { id: userId, deletedAt: null },
-  });
+    const user = await this.prisma.user.findFirst({
+      where: { id: userId, deletedAt: null },
+    });
 
-  if (!user) {
-    throw new NotFoundException('User not found');
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: {
+        deletedAt: new Date(),
+        refreshToken: null, // Revoke refresh token
+        refreshTokenVersion: { increment: 1 },
+        lastActiveAt: new Date(),
+      },
+    });
+
+    this.logger.log(`User account deactivated`, { userId });
   }
-
-  await this.prisma.user.update({
-    where: { id: userId },
-    data: {
-      deletedAt: new Date(),
-      refreshToken: null,          // Revoke refresh token
-      refreshTokenVersion: { increment: 1 }, 
-      lastActiveAt: new Date(),
-    },
-  });
-
-  this.logger.log(`User account deactivated`, { userId });
-}
-
 
   validatePasswordStrength(password: string): void {
     if (password.length < 8) {
@@ -242,6 +250,112 @@ export class UserService {
       throw new BadRequestException(
         'Password must contain at least 3 of the following: lowercase, uppercase, numbers, special characters',
       );
+    }
+  }
+
+  async userOnboarding(userId: string, dto: OnboardingDto) {
+    // 1. Update User Type (Onboarding)
+    if (dto.userType) {
+      await this.prisma.user.update({
+        where: { id: userId },
+        data: { userType: dto.userType },
+      });
+    }
+
+    // 2. Fetch User & Check Limits
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      include: {
+        organizationMemberships: {
+          where: { role: { name: 'owner' } },
+        },
+      },
+    });
+
+    if (!user) throw new NotFoundException('User not found');
+
+    const ownedOrgCount = user.organizationMemberships.length;
+    if (user.userType === 'INDIVIDUAL' && ownedOrgCount >= 1) {
+      throw new ForbiddenException({
+        message:
+          'Individual accounts are limited to 1 Workspace. Please upgrade to Agency.',
+      });
+    }
+
+    // 3. Prepare Slug (Respect DTO, Fallback to Name)
+    let slug = dto.slug;
+    if (!slug) {
+      slug = slugify(dto.name, { lower: true, strict: true });
+    }
+
+    // 4. Check Uniqueness
+    const existing = await this.prisma.organization.findUnique({
+      where: { slug },
+    });
+    if (existing) {
+      throw new ConflictException('Organization URL (slug) is already taken.');
+    }
+
+    let organization; // Declare outside to access in catch block
+
+    try {
+      // 5. Transaction: Create DB Record
+      organization = await this.prisma.$transaction(async (tx) => {
+        const org = await tx.organization.create({
+          data: {
+            name: dto.name,
+            slug,
+            timezone: dto.timezone ?? 'UTC',
+            email: dto.email ?? user.email,
+            status: 'PENDING_PAYMENT',
+            isActive: true,
+          },
+        });
+
+        const ownerRole = await tx.role.findFirst({ where: { name: 'owner' } });
+        if (!ownerRole)
+          throw new InternalServerErrorException("Role 'owner' missing");
+
+        await tx.organizationMember.create({
+          data: {
+            organizationId: org.id,
+            userId,
+            roleId: ownerRole.id,
+            invitedBy: userId,
+          },
+        });
+
+        await tx.brandKit.create({
+          data: { organizationId: org.id, name: `${dto.name} Brand Kit` },
+        });
+
+        return org;
+      });
+
+      // 6. Initialize Payment
+      const paymentData = await this.billingService.initializePayment(
+        organization.id,
+        dto.planId,
+        user,
+      );
+
+      return {
+        organization,
+        payment: paymentData,
+      };
+    } catch (err) {
+      console.log(err);
+      // COMPENSATING TRANSACTION:
+      // If payment failed (or any other error after DB creation),
+      // we should delete the 'Zombie' org so the user can retry with the same slug.
+      if (organization?.id) {
+        await this.prisma.organization
+          .delete({ where: { id: organization.id } })
+          .catch(() => {});
+      }
+
+      this.logger.error('Failed to create organization', err);
+      throw err;
     }
   }
 }
