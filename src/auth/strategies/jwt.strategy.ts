@@ -8,6 +8,7 @@ import { PassportStrategy } from '@nestjs/passport';
 import { ExtractJwt, Strategy } from 'passport-jwt';
 import { PrismaService } from '../../prisma/prisma.service';
 import { JwtPayload } from '../interfaces/jwt-payload.interface';
+import { PlanFeatures } from '@/billing/types/billing.types';
 
 @Injectable()
 export class JwtStrategy extends PassportStrategy(Strategy) {
@@ -28,15 +29,22 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       select: {
         id: true,
         email: true,
-        firstName: true,
-        lastName: true,
-        systemRole: {
-          select: { name: true, id: true },
-        },
-        isEmailVerified: true,
         lockedUntil: true,
         lastPasswordChange: true,
         refreshTokenVersion: true,
+        organizationMemberships: {
+          where: { organizationId: payload.orgId },
+          include: {
+            organization: {
+              include: {
+                subscription: {
+                  include: { plan: true },
+                },
+              },
+            },
+            role: { select: { name: true } },
+          },
+        },
       },
     });
     if (!user) {
@@ -61,9 +69,19 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       }
     }
 
+    const membership = user.organizationMemberships[0];
+    const org = membership?.organization;
+    const plan = org?.subscription?.plan;
+
     return {
-      ...user,
-      orgId: payload.orgId, 
+      userId: user.id,
+      email: user.email,
+      organizationId: payload.orgId,
+      features: (plan?.features as unknown as PlanFeatures) || {},
+      limits: {
+         maxWorkspaces: plan?.maxWorkspaces || 1,
+         maxTeamMembers: plan?.maxTeamMembers || 1,
+      }
     };
   }
 }

@@ -1,3 +1,4 @@
+import { UserType } from '@generated/enums';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 export class SafeUser {
   @ApiProperty({
@@ -33,11 +34,6 @@ export class SafeUser {
   })
   avatar: string | null;
 
-  @ApiProperty({
-    example: 'user',
-    description: 'Role assigned to the user (e.g., ADMIN, USER).',
-  })
-  role: string;
 
   @ApiProperty({
     example: true,
@@ -52,6 +48,13 @@ export class SafeUser {
     nullable: true,
   })
   lastActiveAt: Date | null;
+
+  @ApiProperty({
+    example: 'INDIVIDUAL',
+    description: 'the user type'
+  })
+  userType: UserType
+
 }
 
 export class AuthResponse {

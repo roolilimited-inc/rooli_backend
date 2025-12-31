@@ -16,11 +16,13 @@ model User {
   avatar       String?
   userType     UserType @default(INDIVIDUAL)
   timezone     String?  @default("Africa/Lagos")
+  isOnboardingComplete Boolean @default(true)
   systemRoleId String?
   systemRole   Role?    @relation("UserSystemRole", fields: [systemRoleId], references: [id])
 
-  lastActiveOrgId        String?
-  lastActiveOrganization Organization? @relation("UserLastActiveOrg", fields: [lastActiveOrgId], references: [id], onDelete: SetNull)
+  // Tracks which Workspace (Client) the user was looking at last
+  lastActiveWorkspaceId    String?
+  lastActiveWorkspace      Workspace?    @relation("UserLastActiveWorkspace", fields: [lastActiveWorkspaceId], references: [id], onDelete: SetNull)
 
   // Email verification
   isEmailVerified         Boolean   @default(false)
@@ -45,6 +47,7 @@ model User {
 
   mediaFiles              MediaFile[]
   organizationMemberships OrganizationMember[] @relation("UserOrganizationMemberships")
+  members  WorkspaceMember[]
 
   sentInvitations OrganizationInvitation[] @relation("UserSentInvitations")
 
@@ -61,9 +64,6 @@ model User {
   favoriteTemplates        UserFavoriteTemplate[]
   conversationParticipants ConversationParticipant[]
 
-  socialAccountMemberships SocialAccountMember[] @relation("SocialAccountMemberships")
-  invitedSocialMembers     SocialAccountMember[] @relation("SocialAccountInvitations")
-  socialAccounts           SocialAccount[]
 
   @@index([email, deletedAt])
   @@index([createdAt])
@@ -87,8 +87,6 @@ model SocialAccount {
   errorMessage          String?
   isActive              Boolean   @default(true)
   lastSyncAt            DateTime?
-  connectedById         String?
-  connectedBy           User?     @relation(fields: [connectedById], references: [id])
   createdAt             DateTime  @default(now())
   updatedAt             DateTime  @updatedAt
 
@@ -103,10 +101,10 @@ model SocialAccount {
   websiteClicks  Int       @default(0)
   impressions    Int       @default(0)
 
-  organization  Organization?          @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+ workspaceId String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   posts         Post[]
   rateLimitLogs PlatformRateLimitLog[]
-  members       SocialAccountMember[]
 
   accountType    SocialAccountType    @default(PROFILE)
   notifications  NotificationEntity[]
@@ -120,26 +118,6 @@ model SocialAccount {
   @@index([accountType])
 }
 
-model SocialAccountMember {
-  id              String  @id @default(cuid())
-  socialAccountId String
-  userId          String
-  invitedById     String?
-  roleId          String?
-  isActive        Boolean @default(true)
-
-  // Relations
-  socialAccount SocialAccount @relation(fields: [socialAccountId], references: [id], onDelete: Cascade)
-  role          Role?         @relation(fields: [roleId], references: [id])
-  user          User          @relation("SocialAccountMemberships", fields: [userId], references: [id], onDelete: Cascade)
-  invitedBy     User?         @relation("SocialAccountInvitations", fields: [invitedById], references: [id], onDelete: SetNull)
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  @@unique([socialAccountId, userId])
-  @@index([userId, isActive])
-}
 
 model PageAccount {
   id                  String  @id @default(cuid())
@@ -239,11 +217,11 @@ model Post {
 
   notifications NotificationEntity[]
 
-  organizationId String?
-  organization   Organization? @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+ workspaceId String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
 
   @@index([socialAccountId, status, scheduledAt])
-  @@index([organizationId, status])
+  @@index([workspaceId, status])
   @@index([status, scheduledAt])
   @@index([status, nextAnalyticsCheck])
   @@index([socialAccountId, scheduledAt])
@@ -287,10 +265,10 @@ model PublishingMetric {
 model MediaFolder {
   id             String  @id @default(cuid())
   name           String
-  organizationId String
   parentId       String?
 
-  organization Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  workspaceId String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   parent       MediaFolder?  @relation("FolderHierarchy", fields: [parentId], references: [id], onDelete: NoAction)
   children     MediaFolder[] @relation("FolderHierarchy")
   files        MediaFile[]
@@ -298,15 +276,14 @@ model MediaFolder {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  @@unique([organizationId, parentId, name])
-  @@index([organizationId])
+  @@unique([workspaceId, parentId, name])
+  @@index([workspaceId])
   @@index([parentId])
 }
 
 model MediaFile {
   id                  String    @id @default(cuid())
   userId              String
-  organizationId      String
   filename            String
   originalName        String
   mimeType            String
@@ -332,31 +309,38 @@ model MediaFile {
   aiImageGeneration AiImageGeneration? @relation(fields: [aiGenerationId], references: [id], onDelete: SetNull)
 
   user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
-  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  workspaceId String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
 
   @@index([isAIGenerated])
-  @@index([organizationId, isAIGenerated])
+  @@index([workspaceId, isAIGenerated])
 }
 
 model Organization {
   id               String   @id @default(cuid())
   name             String
   email            String?
-  timezone         String?  @default("Africa/Lagos")
+  timezone         String  @default("Africa/Lagos") //All scheduling logic (cron jobs, "best time to post" AI) defaults to this timezone.
   slug             String   @unique
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
   isActive         Boolean  @default(true)
+ // Branding
+  agencyLogoUrl  String?
+  agencyColor    String?
+  // Billing & Status
+  billingEmail     String?
+  billingCountry   String   @default("NG")
+  currency         String   @default("NGN")
+  status           OrganizationStatus @default(PENDING_PAYMENT)
   totalCreditsUsed Int      @default(0)
-
-  status OrganizationStatus @default(PENDING_PAYMENT)
 
   members        OrganizationMember[]
   invitations    OrganizationInvitation[]
-  socialAccounts SocialAccount[]
-  mediaFiles     MediaFile[]
 
-  usersWhoLastViewed User[] @relation("UserLastActiveOrg")
+  // An Org owns Workspaces
+  workspaces       Workspace[]
+
 
   aiContentGenerations AiContentGeneration[]
   aiImageGenerations   AiImageGeneration[]
@@ -368,26 +352,66 @@ model Organization {
   auditLogs            AuditLog[]
 
   aiUsages AIUsage[]
-  posts    Post[]
 
-  brandKit     BrandKit[]
-  mediaFolders MediaFolder[]
+
   roles        Role[]
 
-  // billing
-  billingEmail          String?
-  flutterwaveCustomerId String? // Optional: The numeric ID if you need it (e.g. 15423)
+  subscriptionGateway  SubscriptionGateway  @default(PAYSTACK)
 
   subscription Subscription? // 1-to-1 relation
   transactions Transaction[] // Payment history
 
-  trialEndsAt   DateTime?
-  trialExtended Boolean   @default(false)
   settings      Json?
 
   publishingMetrics PublishingMetric[]
 
-  @@index([trialEndsAt])
+}
+
+model Workspace {
+  id             String   @id @default(cuid())
+  name           String   // e.g. "Coca Cola Account" or "Personal Brand"
+  slug           String   // unique-per-org logic needed in app code, or globally unique
+  
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  // Social Accounts belong to a Workspace
+  socialAccounts SocialAccount[] 
+  
+  // Posts belong to a Workspace
+  posts          Post[]
+  mediaFolders MediaFolder[]
+  mediaFiles     MediaFile[]
+  brandKit       BrandKit?
+
+  usersActiveHere User[] @relation("UserLastActiveWorkspace")
+  
+  // --- THE "CLIENT LABEL" FEATURES ---
+  // These fields are only used if the Plan allows "clientLabels"
+  clientName     String? 
+  clientStatus   String?  // "Active", "Onboarding", "Churned"
+  clientContact  String?  // "Jane Doe (jane@coke.com)"
+  clientColor    String?  // "#FF0000" (To color-code the dashboard card)
+
+  members  WorkspaceMember[]
+
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@unique([organizationId, slug]) // Slugs must be unique within an organization
+}
+
+model WorkspaceMember {
+  id           String    @id @default(cuid())
+  workspaceId  String
+  userId       String
+  roleId       String  
+
+  workspace    Workspace @relation(fields: [workspaceId], references: [id])
+  user         User      @relation(fields: [userId], references: [id])
+  role         Role      @relation(fields: [roleId], references: [id]) // <--- The Join
+
+  @@unique([workspaceId, userId])
 }
 
 model OrganizationMember {
@@ -414,58 +438,66 @@ model OrganizationMember {
   @@index([lastActiveAt])
 }
 
-model OrganizationInvitation {
-  id             String           @id @default(cuid())
+model Invitation {
+  id             String   @id @default(cuid())
   email          String
-  organizationId String
-  invitedBy      String?
-  roleId         String
-  status         InvitationStatus @default(PENDING)
-  token          String           @unique
+  token          String   @unique // The secret key sent in email
+  
+ organizationId String  // Always required (You always belong to a billing entity)
+  workspaceId    String? // Optional (If null, you are joining the Org generally)
+  roleId         String   // The role they will get upon acceptance
+  
+  inviterId      String   // Who sent the invite?
+  inviter        User     @relation(fields: [inviterId], references: [id])
+  
   expiresAt      DateTime
-  createdAt      DateTime         @default(now())
-  updatedAt      DateTime         @updatedAt
-  resentAt       DateTime?
+  createdAt      DateTime @default(now())
 
-  role         Role         @relation(fields: [roleId], references: [id])
-  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
-  inviter      User?        @relation("UserSentInvitations", fields: [invitedBy], references: [id], onDelete: SetNull)
-
-  message String?
-
-  @@unique([email, organizationId, status]) // Allow re-invite after expiration
-  @@index([token])
-  @@index([expiresAt]) // For cleanup jobs
-  @@index([organizationId, createdAt]) // For org invitation history
-  @@index([email, status])
+  @@unique([email, workspaceId])
 }
 
 // The Plan Model (Your Tiers)
 model Plan {
   id          String  @id @default(cuid())
-  name        String // "Starter", "Agency"
+  name        String   @unique
   description String?
+  tier         PlanTier   @default(CREATOR)
 
-  // PAYSTACK MAPPING
-  paystackPlanCode String @unique // (e.g. "12345") - The ID from Paystack Dashboard
+  // BILLING MAPPING
+  paystackPlanCode String?  @unique 
+  stripePriceId    String?  @unique 
+  stripeProductId  String?  // Good for grouping Monthly/Yearly under one UI card
 
-  // COST (For display in your UI)
-  price    Decimal @db.Decimal(10, 2)
-  currency String  @default("NGN")
-  interval String // "monthly", "yearly"
+  // PRICING (Display purposes)
+  priceNgn      Decimal     @db.Decimal(10, 2) @default(0.00)
+  priceUsd      Decimal     @db.Decimal(10, 2) @default(0.00)
+  interval      BillingInterval
 
-  // LIMITS (The "Guards")
-  maxSocialAccounts Int @default(4)
-  maxTeamMembers    Int @default(1)
-  maxPostsPerMonth  Int @default(100)
 
-  features Json    @default("{}")
-  isActive Boolean @default(true)
+  // --- LIMITS (The "Guards") ---
+  
+  // Rocket Plan specific: "Up to 5 workspaces"
+  maxWorkspaces Int @default(1) 
 
+  // "Up to 3 social profiles" (Creator) vs "4 per workspace" (Rocket)
+  maxSocialAccountsPerWorkspace Int @default(3) 
+
+  // "1 user" (Creator) vs "Unlimited" (Rocket - set to -1 or 9999)
+  maxTeamMembers Int @default(1)
+
+  // AI Usage Limits (Credits per month)
+  monthlyAiCredits Int @default(100)
+
+// --- FEATURES (Flags) ---
+  // JSON stores boolean flags: 
+  // { "canRemoveBranding": true, "hasAdvancedAnalytics": true, "hasApprovalWorkflow": true }
+  features      Json @default("{}") 
+
+  isActive      Boolean @default(true)
   subscriptions Subscription[]
 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
 }
 
 // The Active Subscription
@@ -478,24 +510,31 @@ model Subscription {
   planId String
   plan   Plan   @relation(fields: [planId], references: [id])
 
- // PAYSTACK DATA
-  paystackSubscriptionCode String? // "SUB_vsyqdmlzble3uii"
-  emailToken               String? // "otk_54321"
-  authorizationCode        String? // "AUTH_8dfhgpkv"
-  status                   String // active, cancelled, successful (Paystack statuses)
-
-  // TOKENIZATION (For charging card later if needed)
-  cardToken         String? // "flw_t123..."
-  cancelAtPeriodEnd Boolean @default(false)
-
-  // ACCESS CONTROL
+// STATUS & PERIOD
+  status             String   @default("active") // "active", "past_due", "canceled", "incomplete"
   currentPeriodStart DateTime
   currentPeriodEnd   DateTime
+  cancelAtPeriodEnd  Boolean  @default(false)
+
+  // --- PAYSTACK SPECIFIC FIELDS (NGN) ---
+  paystackSubscriptionCode String? // "SUB_vsyqdmlzble3uii"
+  paystackEmailToken       String? // "otk_54321" (For one-click actions)
+  paystackAuthCode         String? // "AUTH_8dfhgpkv" (CRITICAL: Used to charge card for renewal)
+
+  // --- STRIPE SPECIFIC FIELDS (USD) ---
+  stripeSubscriptionId     String? // "sub_1Mxyz..."
+  stripeCustomerId         String? // "cus_ABC123..."
+  stripePriceId            String? // "price_1Mxyz..." (Helps track which price they bought)
+
+  // --- ENTERPRISE MAGIC: CUSTOM LIMITS ---
+  // If this is set, these numbers OVERRIDE the Plan defaults.
+  // Example: { "maxWorkspaces": 10, "maxTeamMembers": 50 }
+  // Logic: const limit = sub.customLimits?.maxWorkspaces || plan.maxWorkspaces
+  customLimits             Json?   
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
-
 // Transaction History (Invoices)
 model Transaction {
   id String @id @default(cuid())
@@ -503,17 +542,25 @@ model Transaction {
   organizationId String
   organization   Organization @relation(fields: [organizationId], references: [id])
 
-  // TRANSACTION REFS
-  txRef        String @unique // Your internal ref (e.g. "rooli_org123_timestamp")
-  
-  providerTxId String 
-  provider     String @default("PAYSTACK") 
-
   amount      Decimal @db.Decimal(10, 2)
   currency    String
   status      String // successful, failed, abandoned
 
-  paymentDate DateTime @default(now())
+  // PROVIDER DETAILS
+  provider     String   // "PAYSTACK" or "STRIPE"
+  providerTxId String   // Paystack "reference" OR Stripe "invoice_id" / "charge_id"
+  
+  // OPTIONAL: Detailed breakdown
+  metadata     Json?    // Store extra JSON from webhook (e.g. IP address, card type)
+
+  paymentDate  DateTime @default(now())
+  
+  // OPTIONAL: Link to a specific subscription period if needed for auditing
+  subscriptionId String?
+  invoiceUrl     String?
+
+   createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 model AiContentGeneration {
@@ -911,7 +958,7 @@ model AuditLog {
 
 model BrandKit {
   id             String @id @default(cuid())
-  organizationId String
+  workspaceId    String  @unique
   name           String @default("Our Brand")
   version        Int    @default(1) // For version tracking
 
@@ -931,38 +978,12 @@ model BrandKit {
   updatedAt DateTime @updatedAt
 
   // Relations
-  organization         Organization          @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+    workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   aiContentGenerations AiContentGeneration[]
   aiImageGenerations   AiImageGeneration[]
   ContentTemplate      ContentTemplate[]
 
-  @@index([organizationId])
   @@index([isActive])
-}
-
-enum BillingInterval {
-  MONTHLY
-  YEARLY
-}
-
-enum InvoiceStatus {
-  DRAFT
-  OPEN
-  PAID
-  VOID
-  UNCOLLECTIBLE
-}
-
-enum SocialAccountRole {
-  OWNER
-  MANAGER
-  CONTRIBUTOR
-  ANALYST
-}
-
-enum SocialAccountType {
-  PAGE
-  PROFILE
 }
 
 model Permission {
@@ -1001,8 +1022,8 @@ model Role {
   systemUsers             User[]                   @relation("UserSystemRole")
   permissions             RolePermission[]
   organizationMembers     OrganizationMember[]
-  socialAccountMembers    SocialAccountMember[]
   organizationInvitations OrganizationInvitation[]
+  workspaceMembers        WorkspaceMember[]
 
   @@unique([scope, organizationId, name])
   @@index([isSystem, isDefault])
@@ -1041,7 +1062,7 @@ enum PostStatus {
 enum RoleScope {
   SYSTEM
   ORGANIZATION
-  SOCIAL_ACCOUNT
+  WORKSPACE
 }
 
 enum QueueStatus {
@@ -1075,10 +1096,9 @@ enum CreditType {
 }
 
 enum PlanTier {
-  FREE
-  STARTER
-  AGENCY
-  PROFESSIONAL
+  CREATOR
+  BUSINESS
+  ROCKET
   ENTERPRISE
 }
 
@@ -1088,6 +1108,32 @@ enum PlanStatus {
   PAST_DUE
   TRIALING
 }
+
+enum BillingInterval {
+  MONTHLY
+  YEARLY
+}
+
+enum InvoiceStatus {
+  DRAFT
+  OPEN
+  PAID
+  VOID
+  UNCOLLECTIBLE
+}
+
+enum SocialAccountRole {
+  OWNER
+  MANAGER
+  CONTRIBUTOR
+  ANALYST
+}
+
+enum SocialAccountType {
+  PAGE
+  PROFILE
+}
+
 
 enum OrganizationStatus {
   PENDING_PAYMENT // Created but not paid yet
@@ -1237,7 +1283,7 @@ enum GenerationStatus {
 enum PermissionScope {
   SYSTEM
   ORGANIZATION // Organization-wide permissions
-  SOCIAL_ACCOUNT // Social account-specific permissions
+  WORKSPACE
 }
 
 enum PermissionResource {
@@ -1309,4 +1355,9 @@ enum WebhookStatus {
   PROCESSED
   FAILED
   IGNORED
+}
+
+enum SubscriptionGateway {
+  PAYSTACK
+  STRIPE
 }

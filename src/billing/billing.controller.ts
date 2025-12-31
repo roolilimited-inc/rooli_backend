@@ -4,10 +4,12 @@ import { ApiTags, ApiBearerAuth, ApiOperation, ApiResponse, ApiBody } from '@nes
 import { CreatePaymentDto } from './dto/create-payment.dto';
 import { PlanDto } from './dto/plan-response.dto';
 import { Public } from '@/common/decorators/public.decorator';
+import { SubscriptionGuard } from '@/common/guards/subscription.guard';
 
 @ApiTags('Billing')
 @ApiBearerAuth()
 @Controller('billing')
+@UseGuards(SubscriptionGuard)
 export class BillingController {
   constructor(private readonly billingService: BillingService) {}
 
@@ -107,4 +109,18 @@ export class BillingController {
   async verifyPayment(@Query('reference') reference: string) {
     return this.billingService.verifyPayment(reference);
   }
+
+  // ALLOWED even if expired
+  // @Get('invoices')
+  // @BypassSubscription() 
+  // getInvoices() {
+  //   return this.billingService.getAll();
+  // }
+
+  // // ALLOWED even if expired (So they can pay!)
+  // @Post('renew')
+  // @BypassSubscription()
+  // renewSubscription() {
+  //   return this.billingService.chargeCard();
+  // }
 }

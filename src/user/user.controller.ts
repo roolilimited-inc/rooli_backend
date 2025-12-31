@@ -100,13 +100,6 @@ export class UserController {
     return this.usersService.getUsersByOrganization(organizationId, filters);
   }
 
-  @Get('me/social-accounts')
-  @ApiOperation({ summary: "Get current user's accessible social accounts" })
-  @ApiUnauthorizedResponse({ description: 'Unauthorized' })
-  async getMySocialAccounts(@Req() req) {
-    const userId = req.user?.id;
-    return this.usersService.getUserSocialAccounts(userId);
-  }
 
   @Post('onboarding')
   @ApiOperation({

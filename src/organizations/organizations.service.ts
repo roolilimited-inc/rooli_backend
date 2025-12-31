@@ -193,6 +193,61 @@ export class OrganizationsService {
     });
   }
 
+  async inviteUser(
+  inviterId: string, 
+  organizationId: string, 
+  email: string, 
+  roleId: string, 
+  workspaceId?: string // <--- OPTIONAL
+) {
+  const lowerEmail = email.toLowerCase();
+
+  // 1. Validation: Is Inviter allowed to invite?
+  // (You should check this via Guards, but logic here is good too)
+  
+  // 2. Check Exists
+  // If inviting to Workspace, check WorkspaceMember. 
+  // If inviting to Org, check OrganizationMember.
+  if (workspaceId) {
+     const exists = await this.prisma.workspaceMember.findFirst({
+        where: { workspaceId, user: { email: lowerEmail } }
+     });
+     if (exists) throw new ConflictException('User is already in this workspace');
+  } else {
+     const exists = await this.prisma.organizationMember.findFirst({
+        where: { organizationId, user: { email: lowerEmail } }
+     });
+     if (exists) throw new ConflictException('User is already in this organization');
+  }
+
+  // 3. Create Invitation Record
+  const token = crypto.randomBytes(32).toString('hex');
+  const expiresAt = new Date();
+  expiresAt.setDate(expiresAt.getDate() + 7);
+
+  await this.prisma.invitation.upsert({
+    where: { email_workspaceId: { email: lowerEmail, workspaceId: workspaceId ?? 'ORG_LEVEL' } }, 
+    // ^ Note: You might need a composite key fix in Prisma if you want unique constraints to work perfectly with NULLs.
+    // Alternatively, just use create() and handle cleanup manually.
+    create: {
+      email: lowerEmail,
+      organizationId,
+      workspaceId, // Can be null
+      roleId,
+      inviterId,
+      token,
+      expiresAt
+    },
+    update: { token, expiresAt, roleId }
+  });
+
+  // 4. Send Email
+  const context = workspaceId ? 'a specific Workspace' : 'the Organization';
+  await this.emailService.sendInvite(lowerEmail, token, context);
+
+  return { message: 'Invitation sent' };
+}
+
   /**
    * Main Dashboard Analytics with Trend Comparisons (Current vs Previous Period)
    */

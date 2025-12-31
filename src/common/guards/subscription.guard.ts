@@ -1,6 +1,7 @@
 import { PrismaService } from "@/prisma/prisma.service";
 import { Injectable, CanActivate, ExecutionContext, ForbiddenException } from "@nestjs/common";
 import { Reflector } from "@nestjs/core";
+import { BYPASS_SUB_KEY } from "../decorators/bypass-subscription.decorator";
 
 @Injectable()
 export class SubscriptionGuard implements CanActivate {
@@ -14,27 +15,38 @@ export class SubscriptionGuard implements CanActivate {
     const isPublic = this.reflector.get<boolean>('isPublic', context.getHandler());
     if (isPublic) return true;
 
-    const request = context.switchToHttp().getRequest();
-    const orgId = request.user?.organizationId;
+    // 2. Check for "Bypass" routes (Billing, Profile Settings)
+    const bypassSubscription = this.reflector.getAllAndOverride<boolean>(BYPASS_SUB_KEY, [
+      context.getHandler(),
+      context.getClass(),
+    ]);
+    if (bypassSubscription) return true;
 
-    if (!orgId) return false; // Should be handled by AuthGuard, but safety first
+   const request = context.switchToHttp().getRequest();
+    const user = request.user; 
 
-    // 2. Fetch Subscription Status
+    // Safety check: If AuthGuard failed or user is missing, stop here.
+    if (!user || !user.organizationId) return false;
+
+    // INSTEAD of querying the DB, check the user object attached by your AuthStrategy
+    // (You need to ensure your JWT Strategy includes 'subscriptionStatus' in the user object)
+    if (user.subscriptionStatus === 'active') {
+        return true;
+    }
+
+   // FALLBACK: Only query DB if the JWT info is missing or stale (Edge case)
+    // This reduces DB hits by 99%
     const sub = await this.prisma.subscription.findUnique({
-      where: { organizationId: orgId },
+      where: { organizationId: user.organizationId },
       select: { status: true, currentPeriodEnd: true }
     });
 
-    // 3. THE CHECK: Must be Active AND within valid dates
-    const isValid = 
-      sub && 
-      sub.status === 'active' && 
-      sub.currentPeriodEnd > new Date();
+    const isValid = sub && sub.status === 'active' && sub.currentPeriodEnd > new Date();
 
     if (!isValid) {
       throw new ForbiddenException({
-        code: 'PAYMENT_REQUIRED', // Frontend listens for this specific code
-        message: 'Your subscription has expired. Access is restricted.',
+        code: 'PAYMENT_REQUIRED',
+        message: 'Your subscription has expired.',
         action: 'REDIRECT_TO_BILLING'
       });
     }

@@ -557,11 +557,10 @@ async refreshTokens(refreshToken: string): Promise<AuthResponse> {
           firstName: googleUser.firstName,
           lastName: googleUser.lastName,
           avatar: googleUser.picture,
-          isEmailVerified: true, // Google verified it
-          timezone,
+          isEmailVerified: true, 
           systemRoleId: systemRole.id,
           lastPasswordChange: new Date(),
-          userType: 'INDIVIDUAL', // Default type
+          isOnboardingComplete: false,
         },
         include: { systemRole: true } // Needed for toSafeUser
       });
@@ -603,6 +602,121 @@ async refreshTokens(refreshToken: string): Promise<AuthResponse> {
       },
     });
   }
+
+  async acceptInvite(token: string, data: { password?: string, firstName?: string, lastName?: string }) {
+  // 1. Validate Token
+  const invite = await this.prisma.invitation.findUnique({
+    where: { token },
+    include: { inviter: true } // Good for logging "Accepted by X"
+  });
+
+  if (!invite || invite.expiresAt < new Date()) {
+    throw new BadRequestException('Invitation invalid or expired');
+  }
+
+  // 2. Check if User Exists
+  let user = await this.prisma.user.findUnique({ 
+    where: { email: invite.email } 
+  });
+
+  return this.prisma.$transaction(async (tx) => {
+    // SCENARIO A: NEW USER (Must Register)
+    if (!user) {
+      if (!data.password) throw new BadRequestException('Password required for new users');
+      
+      const hashedPassword = await argon2.hash(data.password);
+      
+      user = await tx.user.create({
+        data: {
+          email: invite.email,
+          password: hashedPassword,
+          firstName: data.firstName,
+          lastName: data.lastName,
+          userType: 'INDIVIDUAL', // Or inherit from Org? Usually Individual is fine as they are an employee.
+          isEmailVerified: true, // They clicked the email link, so they are verified!
+        }
+      });
+    }
+
+    // SCENARIO B: EXISTING USER (Just Link them)
+    // 3. Add to ORGANIZATION (If not already)
+    // Employees must belong to the Org to be in a Workspace
+    const orgMemberExists = await tx.organizationMember.findUnique({
+        where: { organizationId_userId: { organizationId: invite.organizationId, userId: user.id }}
+    });
+
+    if (!orgMemberExists) {
+        // Fetch a default "Member" role for the Org level
+        const defaultOrgRole = await tx.role.findFirst({ where: { name: 'member', scope: 'ORGANIZATION' }});
+        
+        await tx.organizationMember.create({
+            data: {
+                userId: user.id,
+                organizationId: invite.organizationId,
+                roleId: defaultOrgRole.id
+            }
+        });
+    }
+
+    // 4. Add to WORKSPACE
+    // This is the specific "Room" they were invited to
+    if (invite.workspaceId) {
+        await tx.workspaceMember.create({
+            data: {
+                userId: user.id,
+                workspaceId: invite.workspaceId,
+                roleId: invite.roleId // The role selected by the Admin (e.g., Editor)
+            }
+        });
+    }
+
+    // A. Always add to Organization (The "Building Pass")
+// If they are already in the Org, we usually skip this or update their role.
+const orgMember = await tx.organizationMember.findUnique({
+    where: { organizationId_userId: { organizationId: invite.organizationId, userId: user.id }}
+});
+
+if (!orgMember) {
+    // If this was an Org Invite (workspaceId is null), use the role from the invite.
+    // If this was a Workspace Invite, give them a default 'MEMBER' role in the Org.
+    
+    let orgRoleId = invite.roleId; 
+    
+    if (invite.workspaceId) {
+        // Since they were invited to a workspace specifically, 
+        // their Org role should just be basic "Member" (so they don't see billing).
+        const defaultRole = await tx.role.findFirst({ where: { name: 'member', scope: 'ORGANIZATION' } });
+        orgRoleId = defaultRole.id;
+    }
+
+    await tx.organizationMember.create({
+        data: {
+            userId: user.id,
+            organizationId: invite.organizationId,
+            roleId: orgRoleId
+        }
+    });
+}
+
+// B. Conditionally add to Workspace (The "Room Key")
+if (invite.workspaceId) {
+    await tx.workspaceMember.create({
+        data: {
+            userId: user.id,
+            workspaceId: invite.workspaceId,
+            roleId: invite.roleId // Use the specific workspace role (Editor, etc)
+        }
+    });
+}
+
+    // 5. Delete Invitation (Clean up)
+    await tx.invitation.delete({ where: { id: invite.id } });
+
+    // 6. Return Token (Auto-Login)
+    // We generate a JWT so they are logged in immediately
+    return this.generateTokens(user.id, user.email, invite.organizationId, 0);
+  });
+}
 
   private async generateTokens(
     userId: string,
@@ -697,9 +811,9 @@ async refreshTokens(refreshToken: string): Promise<AuthResponse> {
       firstName: user.firstName,
       lastName: user.lastName,
       avatar: user.avatar,
-      role: user.systemRole.name,
       isEmailVerified: user.isEmailVerified,
       lastActiveAt: user.lastActiveAt,
+      userType: user.userType
     };
   }
 

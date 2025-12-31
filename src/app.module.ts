@@ -31,6 +31,7 @@ import { BullModule } from '@nestjs/bullmq';
 import { AccessControlModule } from './access-control/access-control.module';
 import { AnalyticsModule } from './analytics/analytics.module';
 import { SubscriptionGuard } from './common/guards/subscription.guard';
+import { WorkspaceModule } from './workspace/workspace.module';
 
 @Module({
   imports: [
@@ -126,6 +127,8 @@ import { SubscriptionGuard } from './common/guards/subscription.guard';
     BullBoardModule,
 
     AccessControlModule,
+
+    WorkspaceModule,
   ],
   controllers: [AppController],
   providers: [

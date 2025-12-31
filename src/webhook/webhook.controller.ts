@@ -20,6 +20,7 @@ import { Queue } from 'bullmq';
 import { PaystackWebhookGuard } from './guards/paystack.guard';
 import { MetaWebhookGuard } from './guards/meta.guard';
 import { PrismaService } from '@/prisma/prisma.service';
+import { StripeWebhookGuard } from './guards/stripe.guard';
 
 @Controller('webhooks')
 @Public()
@@ -57,6 +58,29 @@ async handlePaystack(@Body() payload: any) {
 
   return { status: 'success' };
 }
+
+@Post('stripe')
+  @UseGuards(StripeWebhookGuard)
+  async handleStripe(@Body() payload: any) {
+    // 1. Log Raw Data
+    const log = await this.prisma.webhookLog.create({
+      data: {
+        provider: 'STRIPE',
+        eventType: payload.type,
+        resourceId: payload.data.object.id, // e.g., session_id or invoice_id
+        payload: payload,
+        status: 'PENDING',
+      },
+    });
+
+    // 2. Offload
+    await this.webhooksQueue.add('stripe-event', {
+      logId: log.id,
+      data: payload,
+    });
+
+    return { status: 'received' };
+  }
 
   // ==========================================
   // 2. META (Social - De-auth)
