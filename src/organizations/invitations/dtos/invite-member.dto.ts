@@ -1,8 +1,8 @@
 
-import { IsEmail, IsEnum, IsNotEmpty, IsOptional, IsString } from 'class-validator';
-import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { IsEmail, IsNotEmpty} from 'class-validator';
+import { ApiProperty } from '@nestjs/swagger';
 
-export class InviteMemberDto {
+export class InviteUserDto {
   @ApiProperty({
     example: 'jane.doe@example.com',
     description: 'Email address of the user to invite',
@@ -17,12 +17,4 @@ export class InviteMemberDto {
   })
   @IsNotEmpty()
   roleId: string;
-
-  @ApiPropertyOptional({
-    example: 'Welcome to our team! Excited to collaborate with you.',
-    description: 'Optional custom message included in the invitation email',
-  })
-  @IsOptional()
-  @IsString()
-  message?: string;
 }

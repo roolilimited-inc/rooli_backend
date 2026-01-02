@@ -24,8 +24,6 @@ export class WebhooksProcessor extends WorkerHost {
         await this.processPaystack(logId, data);
       } else if (job.name === 'meta-event') {
         //await this.processMeta(logId, data);
-      } else if (job.name === 'stripe-event') {
-        await this.processStripe(logId, data);
       }
     } catch (error) {
       this.logger.error(
@@ -50,34 +48,57 @@ export class WebhooksProcessor extends WorkerHost {
   // ==========================================
   private async processPaystack(logId: string, payload: any) {
     const event = payload.event;
-    const reference = payload.data?.reference;
+    const data = payload.data; // Helper to avoid payload.data everywhere
+    const reference = data?.reference;
     let organizationId = payload.data?.metadata?.organizationId;
 
     try {
-      if (reference) {
-        const existingLog = await this.prisma.webhookLog.findFirst({
-          where: {
-            resourceId: reference,
-            status: 'PROCESSED',
-            id: { not: logId },
-          },
-        });
+    // 1. Idempotency Check (Prevent duplicates)
+    if (reference) {
+      const existingLog = await this.prisma.webhookLog.findFirst({
+        where: {
+          resourceId: reference,
+          status: 'PROCESSED',
+          id: { not: logId },
+        },
+      });
 
-        if (existingLog) {
-          this.logger.log(`Skipping duplicate event for ref: ${reference}`);
-          return;
-        }
+      if (existingLog) {
+        this.logger.log(`Skipping duplicate event for ref: ${reference}`);
+        return;
       }
+    }
 
-      if (event === 'charge.success') {
+    // 2. Event Handling Switch
+    switch (event) {
+      case 'charge.success':
+        // RENEWAL or NEW SIGNUP: This is the most important one.
+        // It extends the currentPeriodEnd in the DB.
         await this.billingService.activateSubscription(payload);
-      } else if (event === 'subscription.create') {
-        // This event runs in parallel to charge.success to save the email_token
+        break;
+
+      case 'subscription.create':
+        
+        // SYNC: Saves the email_token and subscription_code
         await this.billingService.saveSubscriptionDetails(payload);
-      } else if (event === 'invoice.payment_failed') {
-        // Logic to email user: "Your renewal failed"
-        this.logger.warn(`Renewal failed for ${payload.data.customer.email}`);
-      }
+        break;
+
+      case 'invoice.payment_failed':
+      case 'subscription.not_renew': // Optional: Paystack event for stopped renewals
+      case 'subscription.disable':
+        // EXPIRATION: Determine which code to use
+        // Note: 'subscription.disable' sends code in data.code, others might be data.subscription_code
+        const subCode = data.subscription_code || data.code;
+        
+        if (subCode) {
+           await this.billingService.markAsExpired(subCode);
+           this.logger.warn(`Subscription marked past_due: ${subCode}`);
+        }
+        break;
+
+      default:
+        this.logger.log(`Unhandled Paystack event: ${event}`);
+    }
 
       // Mark Log as Processed
       await this.prisma.webhookLog.update({
@@ -89,42 +110,6 @@ export class WebhooksProcessor extends WorkerHost {
         `Paystack Processing Error [LogID: ${logId}]: ${error.message}`,
       );
       throw error; // Rethrow to be caught by outer handler
-    }
-  }
-
-  private async processStripe(logId: string, payload: any) {
-    const eventType = payload.type;
-    const data = payload.data.object; // The Session or Invoice object
-    let organizationId = null;
-
-    try {
-      // SCENARIO 1: New Subscription (User just finished Checkout)
-      if (eventType === 'checkout.session.completed') {
-        // We attached metadata during initialization, so we can grab it here
-        organizationId = data.metadata?.organizationId;
-        await this.billingService.activateStripeSubscription(data);
-      } 
-      
-      // SCENARIO 2: Recurring Renewal (Automatic Charge)
-      else if (eventType === 'invoice.payment_succeeded') {
-        // Metadata is sometimes missing on Invoices, so we look up by Subscription ID
-        organizationId = await this.billingService.renewStripeSubscription(data);
-      } 
-
-      // SCENARIO 3: Cancellation / Failure
-      else if (eventType === 'customer.subscription.deleted') {
-         await this.billingService.deactivateStripeSubscription(data);
-      }
-
-      // Finalize Log
-      await this.prisma.webhookLog.update({
-        where: { id: logId },
-        data: { status: 'PROCESSED', organizationId, processedAt: new Date() }
-      });
-
-    } catch (error) {
-      this.logger.error(`Stripe Error [${logId}]: ${error.message}`);
-      throw error;
     }
   }
 

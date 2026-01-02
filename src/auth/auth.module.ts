@@ -9,9 +9,11 @@ import { JwtStrategy } from './strategies/jwt.strategy';
 import { MailService } from '@/mail/mail.service';
 import { PrismaService } from '@/prisma/prisma.service';
 import { GoogleStrategy } from './strategies/google.strategy';
+import { BillingModule } from '@/billing/billing.module';
 
 @Module({
   imports: [
+    BillingModule,
     ConfigModule,
     PassportModule.register({ defaultStrategy: 'jwt' }),
     JwtModule.registerAsync({

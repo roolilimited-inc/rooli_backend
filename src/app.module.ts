@@ -5,33 +5,40 @@ import { AppService } from './app.service';
 import { AuthModule } from './auth/auth.module';
 import { ConfigModule } from '@nestjs/config';
 import { ThrottlerModule } from '@nestjs/throttler';
-import { ScheduleModule } from '@nestjs/schedule';
+//import { ScheduleModule } from '@nestjs/schedule';
 import { MailModule } from './mail/mail.module';
-import { RedisModule } from './redis/redis.module';
-import { PostsModule } from './posts/posts.module';
 import { APP_GUARD } from '@nestjs/core';
-import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
-import { UserModule } from './user/user.module';
-import { ApprovalsModule } from './approvals/approvals.module';
 import { BillingModule } from './billing/billing.module';
-import { AiModule } from './ai/ai.module';
-import { MessagingModule } from './messaging/messaging.module';
-import { TemplatesModule } from './templates/templates.module';
-import { WebhookModule } from './webhook/webhook.module';
-import { NotificationModule } from './notification/notification.module';
-import { SocialIntegrationModule } from './social-integration/social-integration.module';
-import { RateLimitModule } from './rate-limit/rate-limit.module';
-import { BrandKitModule } from './brand-kit/brand-kit.module';
-import { SocialAccountModule } from './social-account/social-account.module';
-import { OrganizationsModule } from './organizations/organizations.module';
-import { MetaModule } from './social-integration/meta/meta.module';
-import { SocialSchedulerModule } from './social-scheduler/social-scheduler.module';
 import { BullBoardModule } from './common/bull-boad/bull-board.module';
-import { BullModule } from '@nestjs/bullmq';
-import { AccessControlModule } from './access-control/access-control.module';
-import { AnalyticsModule } from './analytics/analytics.module';
-import { SubscriptionGuard } from './common/guards/subscription.guard';
+import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
+import { OrganizationsModule } from './organizations/organizations.module';
+import { WebhookModule } from './webhook/webhook.module';
 import { WorkspaceModule } from './workspace/workspace.module';
+import { RedisModule } from './redis/redis.module';
+// import { PostsModule } from './posts/posts.module';
+// import { APP_GUARD } from '@nestjs/core';
+// import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
+// import { UserModule } from './user/user.module';
+// import { ApprovalsModule } from './approvals/approvals.module';
+// import { BillingModule } from './billing/billing.module';
+// import { AiModule } from './ai/ai.module';
+// import { MessagingModule } from './messaging/messaging.module';
+// import { TemplatesModule } from './templates/templates.module';
+// import { WebhookModule } from './webhook/webhook.module';
+// import { NotificationModule } from './notification/notification.module';
+// import { SocialIntegrationModule } from './social-integration/social-integration.module';
+// import { RateLimitModule } from './rate-limit/rate-limit.module';
+// import { BrandKitModule } from './brand-kit/brand-kit.module';
+// import { SocialAccountModule } from './social-account/social-account.module';
+// import { OrganizationsModule } from './organizations/organizations.module';
+// import { MetaModule } from './social-integration/meta/meta.module';
+// import { SocialSchedulerModule } from './social-scheduler/social-scheduler.module';
+// import { BullBoardModule } from './common/bull-boad/bull-board.module';
+import { BullModule } from '@nestjs/bullmq';
+// import { AccessControlModule } from './access-control/access-control.module';
+// import { AnalyticsModule } from './analytics/analytics.module';
+// import { SubscriptionGuard } from './common/guards/subscription.guard';
+// import { WorkspaceModule } from './workspace/workspace.module';
 
 @Module({
   imports: [
@@ -54,7 +61,7 @@ import { WorkspaceModule } from './workspace/workspace.module';
           };
         }
 
-        // 2. If running Locally
+        //2. If running Locally
         return {
           connection: {
             host: process.env.REDIS_HOST || 'localhost',
@@ -78,55 +85,55 @@ import { WorkspaceModule } from './workspace/workspace.module';
     ]),
 
     // Task scheduling
-    ScheduleModule.forRoot(),
+    //ScheduleModule.forRoot(),
 
     MailModule,
 
-    RedisModule,
+     RedisModule,
 
-    PostsModule,
+    // PostsModule,
 
-    AiModule,
+    // AiModule,
 
-    MessagingModule,
+    // MessagingModule,
 
-    TemplatesModule,
+    // TemplatesModule,
 
     WebhookModule,
 
-    AnalyticsModule,
+    //AnalyticsModule,
 
-    NotificationModule,
+    //NotificationModule,
 
-    SocialIntegrationModule,
+    //SocialIntegrationModule,
 
-    RateLimitModule,
+    //RateLimitModule,
 
-    BrandKitModule,
+    //BrandKitModule,
 
-    MetaModule,
+    //MetaModule,
 
     //AuditModule,
 
     //PollingModule,
 
-    SocialAccountModule,
+    //SocialAccountModule,
 
     OrganizationsModule,
 
     BillingModule,
 
-    ApprovalsModule,
+    // ApprovalsModule,
 
-    UserModule,
+    // UserModule,
 
-    AccessControlModule,
+    // AccessControlModule,
 
-    SocialSchedulerModule,
+    // SocialSchedulerModule,
 
     BullBoardModule,
 
-    AccessControlModule,
+    // AccessControlModule,
 
     WorkspaceModule,
   ],
@@ -137,10 +144,10 @@ import { WorkspaceModule } from './workspace/workspace.module';
       provide: APP_GUARD,
       useClass: JwtAuthGuard,
     },
-  // {
-  //   provide: APP_GUARD,
-  //   useClass: SubscriptionGuard, // Applies to EVERYTHING by default
-  // },
+    // {
+    //   provide: APP_GUARD,
+    //   useClass: SubscriptionGuard, // Applies to EVERYTHING by default
+    // },
   ],
 })
 export class AppModule {}

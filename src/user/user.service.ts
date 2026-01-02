@@ -13,9 +13,7 @@ import { UserFiltersDto } from './dtos/user-filters.dto';
 import * as argon2 from 'argon2';
 import { SafeUser } from '@/auth/dtos/AuthResponse.dto';
 import { PrismaService } from '@/prisma/prisma.service';
-import { Prisma, SubscriptionGateway, UserType } from '@generated/client';
-import slugify from 'slugify';
-import { OnboardingDto } from '../auth/dtos/user-onboarding.dto';
+import { Prisma,UserType } from '@generated/client';
 import { BillingService } from '@/billing/billing.service';
 
 @Injectable()
@@ -166,97 +164,6 @@ export class UserService {
     this.logger.log(`User account deactivated`, { userId });
   }
 
-// auth.service.ts
-
-async userOnboarding(userId: string, dto: OnboardingDto) {
-  const user = await this.prisma.user.findUnique({ where: { id: userId } });
-  if (!user) throw new NotFoundException('User not found');
-
-  // Prevent double onboarding
-  const existingOrg = await this.prisma.organizationMember.findFirst({
-    where: { userId: user.id }
-  });
-  if (existingOrg) throw new ConflictException('User already has an organization');
-
-  // 1. Prepare Slugs & Roles
-  const orgName = dto.name;
-  const workspaceName = dto.initialWorkspaceName || 'General';
-  const orgSlug = await this.generateUniqueOrgSlug(orgName);
-
-  // 2. TRANSACTION: Create Everything
-  const result = await this.prisma.$transaction(async (tx) => {
-    // A. Update User Type (if selected)
-    if (dto.userType) {
-      await tx.user.update({ where: { id: userId }, data: { userType: dto.userType } });
-    }
-
-    // B. Create Organization
-    const org = await tx.organization.create({
-      data: {
-        name: orgName,
-        slug: orgSlug,
-        billingEmail: user.email,
-        members: {
-          create: {
-            userId: user.id,
-            roleId: (await this.fetchRole(tx, 'owner', 'ORGANIZATION')).id,
-          },
-        },
-      },
-    });
-
-    // C. Create Default Workspace
-    const workspace = await tx.workspace.create({
-      data: {
-        name: workspaceName,
-        slug: slugify(workspaceName, { lower: true }),
-        organizationId: org.id,
-        members: {
-          create: {
-            userId: user.id,
-            roleId: (await this.fetchRole(tx, 'admin', 'WORKSPACE')).id,
-          },
-        },
-      },
-    });
-
-    // D. Create Brand Kit
-    await tx.brandKit.create({
-      data: { workspaceId: workspace.id, name: `${orgName} Brand Kit` },
-    });
-
-    // E. Update User Context (Sticky Session)
-    const updatedUser = await tx.user.update({
-      where: { id: user.id },
-      data: { 
-        lastActiveWorkspaceId: workspace.id,
-        isOnboardingComplete: true
-      },
-      include: { systemRole: true }
-    });
-
-    // F. Generate NEW Tokens (Now containing the OrgID and WorkspaceID)
-    // The old token is invalid for accessing app features because orgId was null.
-    const newTokens = await this.generateTokens(
-      updatedUser.id, updatedUser.email, org.id, workspace.id, updatedUser.refreshTokenVersion
-    );
-    
-    // Save new refresh token
-    await tx.user.update({
-      where: { id: user.id },
-      data: { refreshToken: await argon2.hash(newTokens.refreshToken) }
-    });
-
-    return { user: updatedUser, tokens: newTokens, workspaceId: workspace.id };
-  });
-
-  return {
-    user: this.toSafeUser(result.user),
-    ...result.tokens, // Frontend must replace the old token with this one!
-    activeWorkspaceId: result.workspaceId
-  };
-}
-
   private validatePasswordStrength(password: string): void {
     if (password.length < 8)
       throw new BadRequestException('Password too short');
@@ -268,19 +175,6 @@ async userOnboarding(userId: string, dto: OnboardingDto) {
         'Password needs uppercase, lowercase, and a number or symbol',
       );
     }
-  }
-
-  private async fetchSystemRole(roleName: string) {
-    const role = await this.prisma.role.findFirst({
-      where: { name: roleName }, // Assuming scope: 'SYSTEM' or 'ORGANIZATION'
-    });
-
-    if (!role)
-      throw new InternalServerErrorException(
-        `System Role '${roleName}' not found`,
-      );
-
-    return role;
   }
 
   private toSafeUser(user: any): SafeUser {

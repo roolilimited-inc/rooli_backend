@@ -477,10 +477,10 @@ model Plan {
   description String?
   tier         PlanTier   @default(CREATOR)
 
+
   // BILLING MAPPING
-  paystackPlanCode String?  @unique 
-  stripePriceId    String?  @unique 
-  stripeProductId  String?  // Good for grouping Monthly/Yearly under one UI card
+ paystackPlanCodeNgn String? @unique 
+ paystackPlanCodeUsd String? @unique
 
   // PRICING (Display purposes)
   priceNgn      Decimal     @db.Decimal(10, 2) @default(0.00)
@@ -526,6 +526,7 @@ model Subscription {
 
 // STATUS & PERIOD
   status             String   @default("active") // "active", "past_due", "canceled", "incomplete"
+  isActive  Boolean 
   currentPeriodStart DateTime
   currentPeriodEnd   DateTime
   cancelAtPeriodEnd  Boolean  @default(false)
@@ -535,11 +536,7 @@ model Subscription {
   paystackEmailToken       String? // "otk_54321" (For one-click actions)
   paystackAuthCode         String? // "AUTH_8dfhgpkv" (CRITICAL: Used to charge card for renewal)
 
-  // --- STRIPE SPECIFIC FIELDS (USD) ---
-  stripeSubscriptionId     String? // "sub_1Mxyz..."
-  stripeCustomerId         String? // "cus_ABC123..."
-  stripePriceId            String? // "price_1Mxyz..." (Helps track which price they bought)
-
+  
   // --- ENTERPRISE MAGIC: CUSTOM LIMITS ---
   // If this is set, these numbers OVERRIDE the Plan defaults.
   // Example: { "maxWorkspaces": 10, "maxTeamMembers": 50 }
@@ -560,16 +557,20 @@ model Transaction {
   currency    String
   status      String // successful, failed, abandoned
 
+  txRef    String   @unique
+
   // PROVIDER DETAILS
-  provider     String   // "PAYSTACK" or "STRIPE"
-  providerTxId String   // Paystack "reference" OR Stripe "invoice_id" / "charge_id"
+  provider     String   // "PAYSTACK"
+  providerTxId String   // Paystack "reference"
+
+
   
-  // OPTIONAL: Detailed breakdown
+  // Detailed breakdown
   metadata     Json?    // Store extra JSON from webhook (e.g. IP address, card type)
 
   paymentDate  DateTime @default(now())
   
-  // OPTIONAL: Link to a specific subscription period if needed for auditing
+  // Link to a specific subscription period if needed for auditing
   subscriptionId String?
   invoiceUrl     String?
 

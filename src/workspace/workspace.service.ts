@@ -11,6 +11,7 @@ import slugify from 'slugify';
 import { AddWorkspaceMemberDto } from './dtos/add-member.dto';
 import { CreateWorkspaceDto } from './dtos/create-workspace.dto';
 import { UpdateWorkspaceDto } from './dtos/update-workspace.dto';
+import * as crypto from 'crypto';
 
 @Injectable()
 export class WorkspaceService {
@@ -218,14 +219,29 @@ export class WorkspaceService {
     });
   }
 
-  async inviteMember(inviterId: string, workspaceId: string, email: string, roleId: string) {
+
+
+async inviteMember(inviterId: string, workspaceId: string, email: string, roleId: string) {
   const lowerEmail = email.toLowerCase();
 
-  // 1. Check Permissions (Done by Guards, but good to double check)
-  // ...
+  // 1. VALIDATE WORKSPACE & FETCH CONTEXT
+  // We need the Organization ID for the Invitation record
+  const workspace = await this.prisma.workspace.findUnique({
+    where: { id: workspaceId },
+    select: { id: true, organizationId: true, name: true }
+  });
 
-  // 2. Check if user is ALREADY in the workspace
-  // We don't want to spam people who are already on the team
+  if (!workspace) throw new NotFoundException('Workspace not found');
+
+  // 2. VALIDATE ROLE (Security Check)
+  // Ensure the Role ID passed is actually meant for a Workspace, not an Org
+  const role = await this.prisma.role.findUnique({ where: { id: roleId } });
+  
+  if (!role || role.scope !== 'WORKSPACE') {
+    throw new BadRequestException('Invalid role. Must be a Workspace-level role.');
+  }
+
+  // 3. CHECK EXISTING MEMBERSHIP
   const existingMember = await this.prisma.workspaceMember.findFirst({
     where: { 
       workspaceId, 
@@ -233,22 +249,32 @@ export class WorkspaceService {
     }
   });
 
-  if (existingMember) throw new ConflictException('User is already in this workspace');
+  if (existingMember) throw new ConflictException('User is already a member of this workspace');
 
-  // 3. Generate Secret Token
+  // 4. UPSERT INVITATION
+  // Using a transaction isn't strictly necessary here, but good for safety
   const token = crypto.randomBytes(32).toString('hex');
   const expiresAt = new Date();
-  expiresAt.setDate(expiresAt.getDate() + 7); // 7 Day Expiry
+  expiresAt.setDate(expiresAt.getDate() + 7); // 7 Days
 
-  // 4. Save Invitation to DB
-  // We use upsert so if we invite them again, it just refreshes the token
-  const invitation = await this.prisma.invitation.upsert({
-    where: { email_workspaceId: { email: lowerEmail, workspaceId } },
-    update: { token, expiresAt, roleId },
+  await this.prisma.invitation.upsert({
+    where: { 
+      email_organizationId_workspaceId: { 
+        email: lowerEmail, 
+        organizationId: workspace.organizationId, // <--- You must include this
+        workspaceId: workspaceId 
+      } 
+    },
+    update: { 
+      token, 
+      expiresAt, 
+      roleId, // Allow updating role if re-inviting
+      inviterId 
+    },
     create: {
       email: lowerEmail,
       workspaceId,
-      organizationId: (await this.getOrgId(workspaceId)), // Helper to fetch Org ID
+      organizationId: workspace.organizationId,
       roleId,
       inviterId,
       token,
@@ -256,18 +282,16 @@ export class WorkspaceService {
     }
   });
 
-  // 5. SEND EMAIL (Crucial Step)
-  // You would use a dedicated EmailService here (SendGrid, Resend, Postmark)
-  const inviteLink = `${this.config.get('FRONTEND_URL')}/join?token=${token}`;
+  // 5. SEND EMAIL
+  // It is cleaner to wrap the email logic in a helper method inside MailService
+ // const inviteLink = `${this.configService.get('FRONTEND_URL')}/join?token=${token}`;
   
-  await this.emailService.send({
-    to: lowerEmail,
-    subject: 'You have been invited to join a Workspace on Rooli',
-    html: `
-      <p>You have been invited to join the workspace.</p>
-      <p>Click here to accept: <a href="${inviteLink}">${inviteLink}</a></p>
-    `
-  });
+  // Use a dedicated method in your MailService for better templating
+  // await this.emailService.sendWorkspaceInvite({
+  //   to: lowerEmail,
+  //   workspaceName: workspace.name,
+  //   link: inviteLink
+  // });
 
   return { message: 'Invitation sent' };
 }

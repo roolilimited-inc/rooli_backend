@@ -25,6 +25,7 @@ import { Cron, CronExpression } from '@nestjs/schedule';
 import slugify from 'slugify';
 import { OnboardingDto } from './dtos/user-onboarding.dto';
 import * as geoip from 'geoip-lite';
+import { BillingService } from '@/billing/billing.service';
 
 @Injectable()
 export class AuthService {
@@ -35,6 +36,7 @@ export class AuthService {
     private readonly jwtService: JwtService,
     private readonly configService: ConfigService,
     private readonly emailService: MailService,
+    private readonly billingService: BillingService
   ) {}
 
 async register(registerDto: Register, ip: string) {
@@ -42,7 +44,9 @@ async register(registerDto: Register, ip: string) {
     const lowerEmail = email.toLowerCase();
 
     const geo = geoip.lookup(ip);
-    let timezone = geo.timezone;
+
+   const timezone = geo?.timezone ?? 'Africa/Lagos';
+
 
     const existingUser = await this.prisma.user.findUnique({
       where: { email: lowerEmail },
@@ -58,10 +62,10 @@ async register(registerDto: Register, ip: string) {
         password: hashedPassword,
         firstName,
         lastName,
-        timezone: timezone || 'Africa/Lagos',
+        timezone: timezone,
         userType: 'INDIVIDUAL',
         isEmailVerified: false,
-        systemRoleId: (await this.fetchSystemRole('user')).id,
+        systemRoleId: (await this.fetchSystemRole('USER')).id,
       },
       include: { systemRole: true },
     });
@@ -77,7 +81,7 @@ async register(registerDto: Register, ip: string) {
 
     await this.updateRefreshToken(newUser.id, tokens.refreshToken);
 
-    this.resendVerificationEmail(lowerEmail).catch((e) => this.logger.error(e));
+    //this.resendVerificationEmail(lowerEmail).catch((e) => this.logger.error(e));
 
     return {
       user: this.toSafeUser(newUser),
@@ -87,41 +91,44 @@ async register(registerDto: Register, ip: string) {
     };
   }
 
-  async userOnboarding(userId: string, dto: OnboardingDto) {
-    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+  async userOnboarding( dto: OnboardingDto) {
+    const user = await this.prisma.user.findUnique({ where: { email: dto.userEmail} });
     if (!user) throw new NotFoundException('User not found');
 
-    // Check if they are already an OWNER of an organization
-    const existingOwn = await this.prisma.organizationMember.findFirst({
-      where: { userId: user.id, role: { name: 'owner' } },
+    const selectedPlan = await this.prisma.plan.findUnique({
+      where: { id: dto.planId },
     });
-    if (existingOwn)
-      throw new ConflictException('User already owns an organization');
+    if (!selectedPlan) throw new BadRequestException('Invalid Plan selected');
+
 
     const orgName = dto.name;
     const workspaceName = dto.initialWorkspaceName || 'General';
     const orgSlug = await this.generateUniqueOrgSlug(orgName);
 
-    // TRANSACTION: Create Org, Workspace, BrandKit, update User
-    const result = await this.prisma.$transaction(async (tx) => {
-      // 1. Update User Type
+     // 1. Update User Type
       if (dto.userType) {
-        await tx.user.update({
-          where: { id: userId },
+        await this.prisma.user.update({
+          where: { id: user.id },
           data: { userType: dto.userType },
         });
       }
 
       // 2. Fetch Roles inside transaction
-      const ownerRole = await tx.role.findFirstOrThrow({ where: { name: 'owner', scope: 'ORGANIZATION' }});
-      const adminRole = await tx.role.findFirstOrThrow({ where: { name: 'admin', scope: 'WORKSPACE' }});
+      const ownerRole = await this.prisma.role.findFirstOrThrow({ where: { name: 'OWNER', scope: 'ORGANIZATION' }});
+      const adminRole = await this.prisma.role.findFirstOrThrow({ where: { name: 'WORKSPACE_ADMIN', scope: 'WORKSPACE' }});
 
+
+    // TRANSACTION: Create Org, Workspace, BrandKit, update User
+    const result = await this.prisma.$transaction(async (tx) => {
+     
       // 3. Create Org
       const org = await tx.organization.create({
         data: {
           name: orgName,
           slug: orgSlug,
           billingEmail: user.email,
+          timezone: dto.timezone,
+          status: 'PENDING_PAYMENT',
           members: {
             create: {
               userId: user.id,
@@ -148,7 +155,18 @@ async register(registerDto: Register, ip: string) {
 
       // 5. Create Brand Kit
       await tx.brandKit.create({
-        data: { workspaceId: workspace.id, name: `${orgName} Brand Kit` },
+        data: { workspaceId: workspace.id, name: `${workspaceName} Brand Kit` },
+      });
+
+       await tx.subscription.create({
+        data: {
+          organizationId: org.id,
+          planId: selectedPlan.id,
+          status: 'incomplete', 
+          isActive: false,
+          currentPeriodStart: new Date(),
+          currentPeriodEnd: new Date(), // Expired immediately until payment
+        }
       });
 
       // 6. Update User Context (Sticky Session)
@@ -161,32 +179,41 @@ async register(registerDto: Register, ip: string) {
         include: { systemRole: true },
       });
 
-      // 7. Generate NEW Tokens (Now containing the OrgID and WorkspaceID)
-      const newTokens = await this.generateTokens(
-        updatedUser.id,
-        updatedUser.email,
-        org.id,
-        workspace.id,
-        updatedUser.refreshTokenVersion,
-      );
+    // 7. Generate NEW Tokens (Now containing the OrgID and WorkspaceID)
+    const newTokens = await this.generateTokens(
+      updatedUser.id,
+      updatedUser.email,
+      org.id,
+      workspace.id,
+      updatedUser.refreshTokenVersion,
+    );
 
-      // Save new refresh token
-      await tx.user.update({
-        where: { id: user.id },
-        data: { refreshToken: await argon2.hash(newTokens.refreshToken) },
-      });
-
-      return {
-        user: updatedUser,
-        tokens: newTokens,
-        workspaceId: workspace.id,
-      };
+    // Save new refresh token
+    await tx.user.update({
+      where: { id: user.id },
+      data: { refreshToken: await argon2.hash(newTokens.refreshToken) },
     });
+
+    return {
+      user: updatedUser,
+      tokens: newTokens,
+      workspaceId: workspace.id,
+      org: org,
+    };
+    });
+
+    const paymentData = await this.billingService.initializePayment(
+       result.org.id,
+       selectedPlan.id,
+       result.user,
+    );
 
     return {
       user: this.toSafeUser(result.user),
       ...result.tokens,
       activeWorkspaceId: result.workspaceId,
+      paymentUrl: paymentData.paymentUrl,
+      reference: paymentData.reference
     };
   }
 
@@ -319,7 +346,7 @@ async register(registerDto: Register, ip: string) {
     const lowerEmail = googleUser.email.toLowerCase();
 
       const geo = geoip.lookup(ip);
-    let timezone = geo.timezone;
+    const timezone = geo?.timezone ?? 'Africa/Lagos';
     
     // A. Check if user exists
     let user = await this.prisma.user.findUnique({
@@ -375,7 +402,7 @@ async register(registerDto: Register, ip: string) {
         isEmailVerified: true,
         timezone,
         userType: 'INDIVIDUAL',
-        systemRoleId: (await this.fetchSystemRole('user')).id,
+        //systemRoleId: (await this.fetchSystemRole('user')).id,
       },
       include: { systemRole: true }
     });
@@ -395,108 +422,6 @@ async register(registerDto: Register, ip: string) {
       organizationId: null, // Force redirect to Onboarding
       activeWorkspaceId: null
     };
-  }
-
-  // ===========================================================================
-  // 3. INVITATIONS
-  // ===========================================================================
-
-  async acceptInvite(token: string, data: { password?: string; firstName?: string; lastName?: string }) {
-    const invite = await this.prisma.invitation.findUnique({
-      where: { token },
-    });
-
-    if (!invite || invite.expiresAt < new Date()) {
-      throw new BadRequestException('Invitation invalid or expired');
-    }
-
-    let user = await this.prisma.user.findUnique({
-      where: { email: invite.email },
-    });
-
-    const result = await this.prisma.$transaction(async (tx) => {
-      // 1. Create User if New
-      if (!user) {
-        if (!data.password) throw new BadRequestException('Password required');
-        const hashedPassword = await argon2.hash(data.password);
-        user = await tx.user.create({
-          data: {
-            email: invite.email,
-            password: hashedPassword,
-            firstName: data.firstName,
-            lastName: data.lastName,
-            userType: 'INDIVIDUAL',
-            isEmailVerified: true,
-            systemRoleId: (await this.fetchSystemRole('user')).id,
-          },
-        });
-      }
-
-      // 2. Add to Organization
-      const orgMember = await tx.organizationMember.findUnique({
-        where: {
-          organizationId_userId: {
-            organizationId: invite.organizationId,
-            userId: user.id,
-          },
-        },
-      });
-
-      if (!orgMember) {
-        let orgRoleId = invite.roleId;
-        // If inviting to a workspace, give them basic MEMBER role in Org
-        if (invite.workspaceId) {
-          const defaultRole = await tx.role.findFirst({
-            where: { name: 'member', scope: 'ORGANIZATION' },
-          });
-          orgRoleId = defaultRole.id;
-        }
-
-        await tx.organizationMember.create({
-          data: {
-            userId: user.id,
-            organizationId: invite.organizationId,
-            roleId: orgRoleId,
-          },
-        });
-      }
-
-      // 3. Add to Workspace (if applicable)
-      if (invite.workspaceId) {
-        const wsMember = await tx.workspaceMember.findUnique({
-          where: {
-            workspaceId_userId: {
-              workspaceId: invite.workspaceId,
-              userId: user.id,
-            },
-          },
-        });
-
-        if (!wsMember) {
-          await tx.workspaceMember.create({
-            data: {
-              userId: user.id,
-              workspaceId: invite.workspaceId,
-              roleId: invite.roleId,
-            },
-          });
-        }
-      }
-
-      // 4. Delete Invite
-      await tx.invitation.delete({ where: { id: invite.id } });
-
-      return user;
-    });
-
-    // 5. Generate Token (With the specific workspace context they just joined)
-    return this.generateTokens(
-      result.id,
-      result.email,
-      invite.organizationId,
-      invite.workspaceId || null, // If invited to Org only, this is null
-      0,
-    );
   }
 
   // ===========================================================================
@@ -565,7 +490,7 @@ async register(registerDto: Register, ip: string) {
     const [accessToken, refreshToken] = await Promise.all([
       this.jwtService.signAsync(payload, {
         secret: this.configService.get('JWT_SECRET'),
-        expiresIn: '15m',
+        expiresIn: '7d',
       }),
       this.jwtService.signAsync(payload, {
         secret: this.configService.get('JWT_REFRESH_SECRET'),

@@ -7,176 +7,191 @@ import { prisma } from './utils';
 
 export async function seedPlans() {
   const plans: Prisma.PlanCreateInput[] = [
-    // ==========================================
-    // 1. CREATOR PLAN
-    // ==========================================
+    // ======================
+    // CREATOR
+    // ======================
     {
       name: 'Creator Monthly',
       description: 'For creators, solo founders, freelancers & small brands.',
       tier: PlanTier.CREATOR,
-      priceNgn: 7350.0,
-      priceUsd: 5.0,
+
+      priceNgn: 7350,
+      priceUsd: 5,
+
       interval: BillingInterval.MONTHLY,
+
       maxWorkspaces: 1,
       maxSocialAccountsPerWorkspace: 3,
       maxTeamMembers: 1,
       monthlyAiCredits: 50,
-      features: JSON.stringify({
+
+      features: {
         canRemoveBranding: false,
         advancedAnalytics: false,
         mediaLibrary: true,
-      }),
+      },
+
       isActive: true,
-      paystackPlanCode: 'PLN_u9jzjn5g3as3wk8',
-      stripePriceId: 'prod_ThCNfADGQoP3IR',
+
+      // NGN = REAL
+      paystackPlanCodeNgn: 'PLN_u9jzjn5g3as3wk8',
+
+      // USD = DUMMY (UI ONLY)
+      paystackPlanCodeUsd: 'DUMMY_USD_CREATOR_MONTHLY',
     },
+
     {
       name: 'Creator Annual',
-      description:
-        'Annual - For creators, solo founders, freelancers & small brands.',
+      description: 'Annual - For creators & freelancers.',
       tier: PlanTier.CREATOR,
-      priceNgn: 83790.0,
-      priceUsd: 57.0,
+
+      priceNgn: 83790,
+      priceUsd: 57,
+
       interval: BillingInterval.YEARLY,
+
       maxWorkspaces: 1,
       maxSocialAccountsPerWorkspace: 3,
       maxTeamMembers: 1,
       monthlyAiCredits: 50,
-      features: JSON.stringify({
+
+      features: {
         canRemoveBranding: false,
         advancedAnalytics: false,
         mediaLibrary: true,
-      }),
+      },
+
       isActive: true,
-      paystackPlanCode: 'PLN_tf507aah9h9a3tf',
-      stripePriceId: 'prod_ThYI0CNNSgPdCt',
+
+      paystackPlanCodeNgn: 'PLN_tf507aah9h9a3tf',
+      paystackPlanCodeUsd: 'DUMMY_USD_CREATOR_ANNUAL',
     },
-    // ==========================================
-    // 2. BUSINESS PLAN
-    // ==========================================
+
+    // ======================
+    // BUSINESS
+    // ======================
     {
       name: 'Business Monthly',
       description: 'For growing businesses & small teams.',
-      tier: PlanTier.BUSINESS, // Changed from CREATOR to BUSINESS
-      priceNgn: 14700.0,
-      priceUsd: 10.0,
+      tier: PlanTier.BUSINESS,
+
+      priceNgn: 14700,
+      priceUsd: 10,
+
       interval: BillingInterval.MONTHLY,
+
       maxWorkspaces: 1,
       maxSocialAccountsPerWorkspace: 4,
       maxTeamMembers: 3,
       monthlyAiCredits: 1000,
-      features: JSON.stringify({
+
+      features: {
         canRemoveBranding: true,
         advancedAnalytics: true,
         approvalWorkflow: true,
         bulkScheduling: true,
-        visualCalendar: true,
-      }),
+      },
+
       isActive: true,
-      paystackPlanCode: 'PLN_y8l5ovjzqx6bo5j',
-      stripePriceId: 'prod_ThCTpAiM46VAcY',
+
+      paystackPlanCodeNgn: 'PLN_y8l5ovjzqx6bo5j',
+      paystackPlanCodeUsd: 'DUMMY_USD_BUSINESS_MONTHLY',
     },
+
     {
       name: 'Business Annual',
-      description: 'Annual - For growing businesses & small teams.',
+      description: 'Annual - For growing businesses.',
       tier: PlanTier.BUSINESS,
-      priceNgn: 167580.0,
-      priceUsd: 114.0,
+
+      priceNgn: 167580,
+      priceUsd: 114,
+
       interval: BillingInterval.YEARLY,
+
       maxWorkspaces: 1,
       maxSocialAccountsPerWorkspace: 4,
       maxTeamMembers: 3,
       monthlyAiCredits: 1000,
-      features: JSON.stringify({
+
+      features: {
         canRemoveBranding: true,
         advancedAnalytics: true,
         approvalWorkflow: true,
         bulkScheduling: true,
-        visualCalendar: true,
-      }),
+      },
+
       isActive: true,
-      paystackPlanCode: 'PLN_j2dz1p5g4zima6a',
-      stripePriceId: 'prod_ThYKeKpSURqf5a',
+
+      paystackPlanCodeNgn: 'PLN_j2dz1p5g4zima6a',
+      paystackPlanCodeUsd: 'DUMMY_USD_BUSINESS_ANNUAL',
     },
-    // ==========================================
-    // 3. ROCKET PLAN
-    // ==========================================
+
+    // ======================
+    // ROCKET
+    // ======================
     {
       name: 'Rocket Monthly',
-      description: 'For agencies & companies with large social media teams.',
+      description: 'For agencies & large teams.',
       tier: PlanTier.ROCKET,
-      priceNgn: 44100.0,
-      priceUsd: 30.0,
+
+      priceNgn: 44100,
+      priceUsd: 30,
+
       interval: BillingInterval.MONTHLY,
+
       maxWorkspaces: 5,
       maxSocialAccountsPerWorkspace: 4,
       maxTeamMembers: 9999,
       monthlyAiCredits: 5000,
-      features: JSON.stringify({
+
+      features: {
         canRemoveBranding: true,
         advancedAnalytics: true,
         approvalWorkflow: true,
         whiteLabelReports: true,
-        clientLabels: true,
         prioritySupport: true,
-      }),
+      },
+
       isActive: true,
-      paystackPlanCode: 'PLN_of4tu83cw2og4s5',
-      stripePriceId: 'prod_ThCVVvDvadnRRF',
+
+      paystackPlanCodeNgn: 'PLN_of4tu83cw2og4s5',
+      paystackPlanCodeUsd: 'DUMMY_USD_ROCKET_MONTHLY',
     },
+
     {
       name: 'Rocket Annual',
-      description:
-        'Annual - For agencies & companies with large social media teams.',
+      description: 'Annual - For agencies & companies.',
       tier: PlanTier.ROCKET,
-      priceNgn: 502740.0,
-      priceUsd: 342.0,
+
+      priceNgn: 502740,
+      priceUsd: 342,
+
       interval: BillingInterval.YEARLY,
+
       maxWorkspaces: 5,
       maxSocialAccountsPerWorkspace: 4,
       maxTeamMembers: 9999,
       monthlyAiCredits: 5000,
-      features: JSON.stringify({
+
+      features: {
         canRemoveBranding: true,
         advancedAnalytics: true,
         approvalWorkflow: true,
         whiteLabelReports: true,
-        clientLabels: true,
         prioritySupport: true,
-      }),
+      },
+
       isActive: true,
-      paystackPlanCode: 'PLN_oiwln4pt1wxbw61',
-      stripePriceId: 'prod_ThYMXz0klEnofu',
-    },
-    // ==========================================
-    // 4. ENTERPRISE PLAN
-    // ==========================================
-    {
-      name: 'Enterprise',
-      description:
-        'For large organizations with advanced needs. Contact Sales.',
-      tier: PlanTier.ENTERPRISE,
-      priceNgn: 294000.0,
-      priceUsd: 200.0,
-      interval: BillingInterval.MONTHLY,
-      maxWorkspaces: 10,
-      maxSocialAccountsPerWorkspace: 10,
-      maxTeamMembers: 9999,
-      monthlyAiCredits: 10000,
-      features: JSON.stringify({
-        dedicatedSupport: true,
-        sla: true,
-        customOnboarding: true,
-      }),
-      isActive: false, // Usually not selectable in self-serve
-      paystackPlanCode: 'PLN_50f99tizrj3mp5m',
-      stripePriceId: 'prod_ThCj7AZy4hnuu3',
+
+      paystackPlanCodeNgn: 'PLN_oiwln4pt1wxbw61',
+      paystackPlanCodeUsd: 'DUMMY_USD_ROCKET_ANNUAL',
     },
   ];
+
   await prisma.$transaction(async (tx) => {
     for (const plan of plans) {
       await tx.plan.upsert({
-        where: { name: plan.name }, // Use name as unique identifier
+        where: { name: plan.name },
         update: plan,
         create: plan,
       });

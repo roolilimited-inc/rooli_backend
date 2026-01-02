@@ -28,7 +28,7 @@ export class PermissionsGuard implements CanActivate {
     const user = request.user;
     
     
-    if (user?.systemRole?.name === 'super_admin') {
+    if (user?.systemRole?.name === 'SUPER_ADMIN') {
        return true; 
     }
 
@@ -45,7 +45,7 @@ export class PermissionsGuard implements CanActivate {
 
     // 4. CHECK 2: Context Owner (e.g., Org Owner or Workspace Owner)
     // Note: Ensure this explicitly checks for the 'OWNER' role specifically
-    if (role.name === 'owner') { 
+    if (role.name === 'OWNER') { 
        return true;
     }
 

@@ -40,11 +40,4 @@ export class Register {
   @IsString()
   lastName?: string;
 
-  @ApiPropertyOptional({
-    description: 'Role of the user',
-    example: 'user',
-  })
-  @IsOptional()
-  @IsString()
-  role?: string;
 }

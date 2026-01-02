@@ -1,18 +1,14 @@
 import { prisma } from './utils';
-import { seedPermissions } from './seed-permissions';
-import { seedRoles } from './seed-roles';
 import { seedUsers } from './seed-users';
 import { seedPlans } from './seed-plans';
+import { seedRBAC } from './seed-rbac';
 
 async function main() {
-  console.log('Seeding permissions...');
-  const permissionMap = await seedPermissions();
+  console.log('Seeding rbac...');
+   await seedRBAC();
 
-  console.log('Seeding roles...');
-  await seedRoles(permissionMap);
-
-  console.log('Seeding users...');
-  await seedUsers();
+  // console.log('Seeding users...');
+  // await seedUsers();
 
   console.log('Seeding plans...');
   await seedPlans();

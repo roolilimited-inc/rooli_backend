@@ -50,12 +50,14 @@ app.enableCors({
 
   app.useGlobalInterceptors(new TransformInterceptor());
 
-  app.useGlobalFilters(
-    new PrismaExceptionFilter(),
-    new AllExceptionsFilter(httpAdapter),
-  );
+app.useGlobalFilters(
+  new PrismaExceptionFilter(),
+  new AllExceptionsFilter(httpAdapter),
+);
 
+const server = app.getHttpAdapter().getInstance();
+server.set('trust proxy', true);
 
-  await app.listen(process.env.PORT ?? 3000);
+await app.listen(process.env.PORT ?? 3000);
 }
 bootstrap();

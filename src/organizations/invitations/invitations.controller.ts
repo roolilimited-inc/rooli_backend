@@ -6,8 +6,9 @@ import {
   Get,
   Delete,
   Req,
+  Query,
 } from '@nestjs/common';
-import { InviteMemberDto } from './dtos/invite-member.dto';
+import { InviteUserDto } from './dtos/invite-member.dto';
 import { InvitationsService } from './invitations.service';
 import {
   ApiTags,
@@ -15,76 +16,74 @@ import {
   ApiOperation,
   ApiResponse,
 } from '@nestjs/swagger';
-import { OrgAuth } from '@/common/decorators/auth.decorator';
+import { OrgAuth, WorkspaceAuth } from '@/common/decorators/auth.decorator';
+import { AcceptInviteDto } from './dtos/accept-invite.dto';
+import { Public } from '@/common/decorators/public.decorator';
+import { CurrentUser } from '@/common/decorators/current-user.decorator';
 
-@ApiTags('Organization Invitations')
+@ApiTags('Invitations')
 @ApiBearerAuth()
 @Controller()
 export class InvitationsController {
   constructor(private readonly invitationsService: InvitationsService) {}
 
-  @Post('organizations/:orgId/invitations')
-  @OrgAuth({ resource: 'MEMBERS', action: 'MANAGE' })
-  @ApiOperation({ summary: 'Invite a new member to the organization' })
-  @ApiResponse({ status: 201, description: 'Invitation created successfully' })
-  @ApiResponse({
-    status: 400,
-    description: 'Member limit reached or invalid data',
-  })
-  @ApiResponse({
-    status: 409,
-    description: 'User already invited or already a member',
-  })
-  async inviteMember(
-    @Param('orgId') orgId: string,
-    @Req() req: any,
-    @Body() dto: InviteMemberDto,
-  ) {
-    return this.invitationsService.inviteMember(orgId, req.user.id, dto);
-  }
 
-  @Post('invitations/accept/:token')
+  @Post('invitations/accept')
+  @Public() 
   @ApiOperation({ summary: 'Accept an invitation' })
-  @ApiResponse({
-    status: 200,
-    description: 'Invitation accepted, membership created',
-  })
-  @ApiResponse({
-    status: 400,
-    description: 'Invitation already processed or expired',
-  })
-  @ApiResponse({ status: 404, description: 'Invitation not found' })
-  async acceptInvitation(@Param('token') token: string, @Req() req: any) {
-    return this.invitationsService.acceptInvitation(token, 'cmiraqm38000go4iaeomi1pz7');
+  @ApiResponse({ status: 201, description: 'User created/linked and logged in.' })
+  async acceptInvite(
+    @Query('token') token: string,
+    @Body() body: AcceptInviteDto 
+  ) {
+    return this.invitationsService.acceptInvite(token, body);
   }
 
-  @Post('invitations/:id/resend')
-  @ApiOperation({ summary: 'Resend an invitation email' })
-  @ApiResponse({ status: 200, description: 'Invitation resent successfully' })
-  @ApiResponse({ status: 404, description: 'Invitation not found' })
-  async resendInvitation(@Param('id') invitationId: string) {
-    return this.invitationsService.resendInvitation(invitationId);
+
+
+  @Post('organizations/:organizationId/invitations')
+  @OrgAuth({ resource: 'MEMBERS', action: 'CREATE' })
+  @ApiOperation({ summary: 'Invite a member to the Organization (No Workspace)' })
+  async inviteToOrg(
+    @Param('organizationId') orgId: string,
+    @Body() body: InviteUserDto,
+    @CurrentUser('id') userId: string
+  ) {
+    return this.invitationsService.inviteUser(
+      userId,
+      orgId,
+      body.email,
+      body.roleId,
+      null 
+    );
   }
 
-  @Post(':token/decline')
-  @ApiOperation({ summary: 'Decline an organization invitation' })
-  @ApiResponse({ status: 200, description: 'Invitation successfully declined' })
-  declineInvitation(@Param('token') token: string, @Req() req: any) {
-    return this.invitationsService.declineInvitation(token);
+  @Get('organizations/:organizationId/invitations')
+  @OrgAuth({ resource: 'MEMBERS', action: 'READ' })
+  @ApiOperation({ summary: 'List pending organization invites' })
+  async listOrgInvites(@Param('organizationId') orgId: string) {
+    return this.invitationsService.getPendingInvitations(orgId);
   }
 
-  @Delete('invitations/:id/revoke')
-  @ApiOperation({ summary: 'Revoke an invitation' })
-  @ApiResponse({ status: 200, description: 'Invitation revoked successfully' })
-  @ApiResponse({ status: 404, description: 'Invitation not found' })
-  async revokeInvitation(@Param('id') invitationId: string, @Req() req: any) {
-    return this.invitationsService.revokeInvitation(invitationId);
-  }
+  // ===========================================================================
+  // 3. WORKSPACE INVITES (Team Members, Editors)
+  // ===========================================================================
 
-  @Get('organizations/:orgId/invitations')
-  @ApiOperation({ summary: 'Get all invitations for an organization' })
-  @ApiResponse({ status: 200, description: 'List of invitations' })
-  async getOrganizationInvitations(@Param('orgId') orgId: string) {
-    return this.invitationsService.getOrganizationInvitations(orgId);
+  @Post('workspaces/:workspaceId/invitations')
+  @WorkspaceAuth({ resource: 'MEMBERS', action: 'CREATE' })
+  @ApiOperation({ summary: 'Invite a member to a specific Workspace' })
+  async inviteToWorkspace(
+    @Param('workspaceId') workspaceId: string,
+    @Body() body: InviteUserDto,
+    @CurrentUser('id') userId: string,
+    @CurrentUser('organizationId') orgId: string // ContextGuard populated this!
+  ) {
+    return this.invitationsService.inviteUser(
+      userId,
+      orgId,
+      body.email,
+      body.roleId,
+      workspaceId 
+    );
   }
 }

@@ -1,15 +1,17 @@
-import { Body, Controller, Delete, Get, HttpCode, Post, Query, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, HttpCode, HttpStatus, Ip, Post, Query, Req, UseGuards } from '@nestjs/common';
 import { BillingService } from './billing.service';
 import { ApiTags, ApiBearerAuth, ApiOperation, ApiResponse, ApiBody } from '@nestjs/swagger';
 import { CreatePaymentDto } from './dto/create-payment.dto';
 import { PlanDto } from './dto/plan-response.dto';
 import { Public } from '@/common/decorators/public.decorator';
-import { SubscriptionGuard } from '@/common/guards/subscription.guard';
+import { BypassSubscription } from '@/common/decorators/bypass-subscription.decorator';
+import { ContextGuard } from '@/common/guards/context.guard';
+import { PermissionResource, PermissionAction } from '@generated/enums';
+import { OrgAuth } from '@/common/decorators/auth.decorator';
 
 @ApiTags('Billing')
-@ApiBearerAuth()
 @Controller('billing')
-@UseGuards(SubscriptionGuard)
+@BypassSubscription() 
 export class BillingController {
   constructor(private readonly billingService: BillingService) {}
 
@@ -18,109 +20,81 @@ export class BillingController {
   @Public()
   @ApiOperation({
     summary: 'Get available subscription plans',
-    description: 'Returns all active billing plans ordered by price.',
+    description: 'Returns all active billing plans ordered by price (NGN).',
   })
   @ApiResponse({
     status: 200,
     description: 'List of available plans',
     type: [PlanDto],
   })
-  async getPlans() {
-    return this.billingService.getAvailablePlans();
-  }
-
-  @Get('subscription')
-  @ApiOperation({
-    summary: 'Get current organization subscription',
-    description: 'Returns the active subscription and plan details.',
-  })
-  @ApiResponse({
-    status: 200,
-    description: 'Current subscription details',
-  })
-  @ApiResponse({
-    status: 404,
-    description: 'No subscription found',
-  })
-  async getSubscription(@Req() req: any) {
-    const organizationId = req.user.organizationId;
-    return this.billingService.getSubscription(organizationId);
-  }
-
-
-  @Post('checkout')
-  @Public()
-  @ApiOperation({
-    summary: 'Initialize subscription payment',
-    description:
-      'Creates a Flutterwave checkout session and returns a payment URL.',
-  })
-  @ApiBody({ type: CreatePaymentDto })
-  @ApiResponse({
-    status: 201,
-    description: 'Payment initialized',
-    schema: {
-      example: {
-        paymentUrl: 'https://checkout.flutterwave.com/...',
-        txRef: 'rooli_org123_171500000',
-      },
-    },
-  })
-  @ApiResponse({
-    status: 400,
-    description: 'Invalid plan or billing email missing',
-  })
-  async initializePayment(
-    @Req() req: any,
-    body: CreatePaymentDto,
-  ) {
-    const organizationId = req.user.organizationId;
-    const user = req.user;
-
-    return this.billingService.initializePayment(
-      organizationId,
-      body.planId,
-      user
-    );
-  }
-
-
-  @Delete('subscription')
-  @HttpCode(200)
-  @ApiOperation({
-    summary: 'Cancel current subscription',
-    description:
-      'Cancels auto-renewal. Access remains until the current period ends.',
-  })
-  @ApiResponse({
-    status: 200,
-    description: 'Subscription cancelled successfully',
-  })
-  @ApiResponse({
-    status: 400,
-    description: 'No active subscription to cancel',
-  })
-  async cancelSubscription(@Req() req: any) {
-    const organizationId = req.user.organizationId;
-    return this.billingService.cancelSubscription(organizationId);
+  async getPlans(@Ip() ip: string) {
+    return this.billingService.getAvailablePlans(ip);
   }
 
   @Get('verify')
+  @Public()
+  @ApiOperation({
+    summary: 'Verify payment status',
+    description: 'Called by Frontend/Gateway callback to check transaction status.',
+  })
   async verifyPayment(@Query('reference') reference: string) {
     return this.billingService.verifyPayment(reference);
   }
 
-  // ALLOWED even if expired
-  // @Get('invoices')
-  // @BypassSubscription() 
-  // getInvoices() {
-  //   return this.billingService.getAll();
-  // }
+  // ===========================================================================
+  // AUTHENTICATED ROUTES 
+  // ===========================================================================
 
-  // // ALLOWED even if expired (So they can pay!)
-  // @Post('renew')
-  // @BypassSubscription()
-  // renewSubscription() {
-  //   return this.billingService.chargeCard();
-  // }
+  @Get('subscription')
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: 'Get current subscription details',
+    description: 'Returns the active plan, status, and renewal dates.',
+  })
+  async getSubscription(@Req() req: any) {
+    // ContextGuard ensures req.user.organizationId is populated
+    return this.billingService.getSubscription(req.user.organizationId);
+  }
+
+  @Post('checkout')
+  @ApiBearerAuth()
+  @HttpCode(HttpStatus.CREATED)
+  @ApiOperation({
+    summary: 'Initialize new payment or upgrade',
+    description: 'Generates a payment link (Paystack) based on User IP currency.',
+  })
+  @ApiBody({ type: CreatePaymentDto })
+  @ApiResponse({
+    status: 201,
+    description: 'Payment initialized successfully',
+    schema: { example: { paymentUrl: 'https://checkout...', reference: '...' } }
+  })
+  async initializePayment(
+    @Req() req: any,
+    @Body() body: CreatePaymentDto,
+    @Ip() ip: string // <--- Capture IP for Currency Logic
+  ) {
+    return this.billingService.initializePayment(
+      req.user.organizationId,
+      body.planId,
+      req.user, // Pass user object for email fallback
+    );
+  }
+
+  // ===========================================================================
+  // PROTECTED ROUTES (Admins/Owners Only)
+  // ===========================================================================
+
+  @Delete('subscription')
+  @ApiBearerAuth()
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(ContextGuard)
+  @OrgAuth({ resource: PermissionResource.BILLING, action: PermissionAction.MANAGE })
+  @ApiOperation({
+    summary: 'Cancel auto-renewal',
+    description: 'Downgrades to free tier at the end of the current period.',
+  })
+  async cancelSubscription(@Req() req: any) {
+    return this.billingService.cancelSubscription(req.user.organizationId);
+  }
 }

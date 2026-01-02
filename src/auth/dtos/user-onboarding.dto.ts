@@ -1,8 +1,17 @@
 import { UserType } from '@generated/enums';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsNotEmpty, IsString, IsOptional, IsEnum } from 'class-validator';
+import { IsNotEmpty, IsString, IsOptional, IsEnum, IsEmail } from 'class-validator';
 
 export class OnboardingDto {
+
+  @ApiProperty({
+    description: 'The email of the registered user',
+    example: 'user@example.com',
+  })
+  @IsNotEmpty()
+  @IsEmail()
+  userEmail: string
+
   @ApiProperty({
     description: 'The name of the organization',
     example: 'Acme Corporation',
@@ -52,13 +61,6 @@ export class OnboardingDto {
   @IsString()
   slug?: string;
 
-  @ApiPropertyOptional({
-    description: 'The country for billing',
-    example: 'NG',
-  })
-  @IsString()
-  @IsOptional()
-  billingCountry?: string;
 
   @ApiPropertyOptional({
     description: 'New workSpace for agencies',

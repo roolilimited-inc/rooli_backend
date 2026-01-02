@@ -212,6 +212,7 @@ export class AuthController {
   }
 
   @Post('onboarding')
+  @Public()
   @ApiOperation({
     summary: 'User Onboarding',
     description:
@@ -234,8 +235,8 @@ export class AuthController {
       },
     },
   })
-  async userOnboarding(@Req() req, @Body() dto: OnboardingDto) {
-    return this.authService.userOnboarding(req.user.id, dto);
+  async userOnboarding(@Body() dto: OnboardingDto) {
+    return this.authService.userOnboarding(dto);
   }
 
   @Post('logout')

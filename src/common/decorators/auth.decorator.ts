@@ -1,37 +1,48 @@
 // decorators/auth.decorator.ts
 import { applyDecorators, UseGuards } from '@nestjs/common';
-import {  ApiForbiddenResponse, ApiUnauthorizedResponse } from '@nestjs/swagger';
-import { OrganizationGuard } from '../guards/organization.guard';
-import { SocialAccountGuard } from '../guards/social-account.guard';
-import { RequirePermissions, RequiredPermission } from './permissions.decorator';
+import {
+  ApiForbiddenResponse,
+  ApiUnauthorizedResponse,
+} from '@nestjs/swagger';
+import {
+  RequirePermissions,
+  RequiredPermission,
+} from './permissions.decorator';
 import { PermissionsGuard } from '../guards/permission.guard';
+import { ContextGuard } from '../guards/context.guard';
 
 /**
- * Protects a route requiring Organization Membership.
- * automatically adds Swagger Auth docs and guards.
+ * 1. ORGANIZATION LEVEL AUTH
+ * Use this on routes with `:organizationId` or `:orgId`
  */
 export function OrgAuth(...permissions: RequiredPermission[]) {
   return applyDecorators(
-    ApiUnauthorizedResponse({ description: 'Unauthorized / Session Expired' }),
-    ApiForbiddenResponse({ description: 'Forbidden / Insufficient Permissions' }),
+    ApiUnauthorizedResponse({ description: 'Session Expired' }),
+    ApiForbiddenResponse({ description: 'Insufficient Permissions' }),
 
-    // Set Metadata (if permissions are provided)
+    // Set Permissions Metadata
     RequirePermissions(...permissions),
 
-    //  Verify Org Membership (OrganizationGuard)
-    // Verify Specific Permissions (PermissionsGuard)
-    UseGuards(OrganizationGuard, PermissionsGuard),
+    // Chain: Auth -> Resolve Context (Org) -> Check Permission
+    UseGuards(ContextGuard, PermissionsGuard),
   );
 }
 
 /**
- * Protects a route requiring Social Account Membership.
+ * 2. WORKSPACE LEVEL AUTH
+ * Use this on routes with `:workspaceId` or `:wsId`
  */
-export function SocialAuth(...permissions: RequiredPermission[]) {
+export function WorkspaceAuth(...permissions: RequiredPermission[]) {
   return applyDecorators(
-    ApiUnauthorizedResponse({ description: 'Unauthorized' }),
-    ApiForbiddenResponse({ description: 'Forbidden' }),
+    ApiUnauthorizedResponse({ description: 'Session Expired' }),
+    ApiForbiddenResponse({
+      description: 'Insufficient Permissions for Workspace',
+    }),
+
     RequirePermissions(...permissions),
-    UseGuards( SocialAccountGuard, PermissionsGuard),
+
+    // Chain: Auth -> Resolve Context (Workspace) -> Check Permission
+    // It's the SAME guard stack! ContextGuard handles the difference automatically.
+    UseGuards(ContextGuard, PermissionsGuard),
   );
 }
