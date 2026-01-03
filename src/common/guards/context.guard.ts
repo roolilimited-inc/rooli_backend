@@ -24,31 +24,55 @@ export class ContextGuard implements CanActivate {
     // ====================================================
     // SCENARIO A: User is accessing a WORKSPACE
     // ====================================================
-    if (workspaceId) {
-      const member = await this.prisma.workspaceMember.findUnique({
+   if (workspaceId) {
+      // 1. Try to find Direct Workspace Membership
+      const wsMember = await this.prisma.workspaceMember.findUnique({
         where: {
-          workspaceId_userId: {
-            workspaceId: workspaceId,
-            userId: user.userId,
-          },
+          workspaceId_userId: { workspaceId, userId: user.userId },
         },
-        include: {
-          role: {
-            include: { permissions: { include: { permission: true } } },
-          },
-        },
+        include: { role: { include: { permissions: { include: { permission: true } } } } },
       });
 
-      if (!member) {
-        throw new ForbiddenException('You are not a member of this workspace.');
+      if (wsMember) {
+        request.currentContext = 'WORKSPACE';
+        request.currentRole = wsMember.role;
+        request.currentMember = wsMember;
+        return true;
       }
 
-      // ATTACH CONTEXT
-      request.currentContext = 'WORKSPACE';
-      request.currentRole = member.role;
-      request.currentMember = member;
-      
-      return true;
+      // 2. FALLBACK: Check if they are Organization Owner/Admin (Implicit Access)
+      // We need to fetch the workspace first to know which Org it belongs to
+      const workspace = await this.prisma.workspace.findUnique({
+        where: { id: workspaceId },
+        select: { organizationId: true }
+      });
+
+      if (workspace) {
+        const orgMember = await this.prisma.organizationMember.findUnique({
+          where: {
+            organizationId_userId: { 
+              organizationId: workspace.organizationId, 
+              userId: user.userId 
+            }
+          },
+          include: { 
+            role: { 
+              include: { permissions: { include: { permission: true } } } 
+            }
+          }
+        });
+
+        // Grant access if they are OWNER or ADMIN of the parent Org
+        if (orgMember && ['OWNER', 'ADMIN'].includes(orgMember.role.name)) {
+             
+             request.currentContext = 'WORKSPACE';
+             request.currentRole = orgMember.role; 
+             request.currentMember = orgMember; 
+             return true;
+        }
+      }
+
+      throw new ForbiddenException('You are not a member of this workspace.');
     }
 
     // ====================================================
