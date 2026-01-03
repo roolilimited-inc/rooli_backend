@@ -29,9 +29,10 @@ export class SocialConnectionService {
    * Generates the redirect URL to send the user to (e.g. "facebook.com/dialog/oauth...")
    */
   getAuthUrl(platform: Platform, organizationId: string): string {
-    const state = Buffer.from(JSON.stringify({ organizationId })).toString(
-      'base64',
-    );
+   const rawState = Buffer.from(JSON.stringify({ organizationId })).toString('base64');
+  
+  // 🛡️ ENCODE IT: Ensures special chars like '+', '/', '=' travel safely in URL
+  const state = encodeURIComponent(rawState);
 
     switch (platform) {
       case 'FACEBOOK':
@@ -50,17 +51,18 @@ export class SocialConnectionService {
    * Returns the Connection ID and a list of Pages user can import.
    */
   async handleCallback(platform: Platform, code: string, state: string) {
-    // 1. Decode State to ensure security & get Context
-    let organizationId: string;
-    try {
-      const decoded = JSON.parse(
-        Buffer.from(state, 'base64').toString('utf-8'),
-      );
-      organizationId = decoded.organizationId;
-    } catch (e) {
-      throw new BadRequestException('Invalid OAuth state');
-    }
 
+    const decodedState = decodeURIComponent(state).split('#')[0];
+
+   let organizationId: string;
+  try {
+    const jsonString = Buffer.from(decodedState, 'base64').toString('utf-8');
+    const decoded = JSON.parse(jsonString);
+    organizationId = decoded.organizationId;
+  } catch (e) {
+    this.logger.error(`State Decode Failed. Input: ${state}`);
+    throw new BadRequestException('Invalid OAuth state');
+  }
     // 2. Exchange Code for Tokens (Platform Specific)
     let authData: OAuthResult;
     try {
@@ -132,11 +134,13 @@ export class SocialConnectionService {
 
     if (!connection) throw new NotFoundException('Connection not found');
 
+    const decryptedToken = await this.encryptionService.decrypt(connection.accessToken);
+
     try {
       switch (connection.platform) {
         case 'FACEBOOK':
           // Returns Facebook Pages AND Instagram Business Accounts
-          return await this.facebook.getPages(connection.accessToken);
+          return await this.facebook.getPages(decryptedToken);
 
         case 'LINKEDIN':
           // Returns LinkedIn Company Pages

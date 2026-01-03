@@ -9,5 +9,6 @@ import { HttpModule } from '@nestjs/axios';
   imports: [HttpModule],
   controllers: [SocialConnectionController],
   providers: [SocialConnectionService, EncryptionService, FacebookService],
+  exports:[SocialConnectionService]
 })
 export class SocialConnectionModule {}
