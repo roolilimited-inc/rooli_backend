@@ -39,6 +39,7 @@ import { BullModule } from '@nestjs/bullmq';
 // import { AnalyticsModule } from './analytics/analytics.module';
 // import { SubscriptionGuard } from './common/guards/subscription.guard';
 // import { WorkspaceModule } from './workspace/workspace.module';
+import { SocialConnectionModule } from './social-connection/social-connection.module';
 
 @Module({
   imports: [
@@ -136,6 +137,8 @@ import { BullModule } from '@nestjs/bullmq';
     // AccessControlModule,
 
     WorkspaceModule,
+
+    SocialConnectionModule,
   ],
   controllers: [AppController],
   providers: [
