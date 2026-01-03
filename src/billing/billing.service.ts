@@ -187,6 +187,14 @@ export class BillingService {
         where: { id: organizationId },
         data: { status: 'ACTIVE', isActive: true },
       });
+
+      //unlock social profiles too
+      await tx.socialProfile.updateMany({
+        where: {
+          workspace: { organizationId: organizationId },
+        },
+        data: { isActive: true },
+      });
     });
   }
 
@@ -365,26 +373,46 @@ export class BillingService {
     });
   }
 
-  //@Cron(CronExpression.EVERY_DAY_AT_MIDNIGHT)
+//@Cron(CronExpression.EVERY_DAY_AT_MIDNIGHT)
   async handleExpiredSubscriptions() {
-    this.logger.log('Running expiry check...');
-
+    this.logger.log('🕵️ Running Daily Expiry Check...');
     const now = new Date();
-
-    // Find all 'active' subscriptions that have passed their end date
-    const result = await this.prisma.subscription.updateMany({
+    
+    // 1. Find subscriptions that just expired
+    // We fetch them first so we know WHICH orgs to lock
+    const expiredSubs = await this.prisma.subscription.findMany({
       where: {
         status: 'active',
-        currentPeriodEnd: { lt: now }, // End Date is Less Than Now
+        currentPeriodEnd: { lt: now },
       },
-      data: {
-        status: 'past_due',
-        isActive: false,
-      },
+      select: { id: true, organizationId: true }
     });
 
-    if (result.count > 0) {
-      this.logger.warn(`Expired ${result.count} subscriptions.`);
+    if (expiredSubs.length === 0) return;
+
+    this.logger.warn(`Found ${expiredSubs.length} expired subscriptions. Locking accounts...`);
+
+    // 2. Process Locks (Using Promise.all for speed, or loop for safety)
+    for (const sub of expiredSubs) {
+      await this.prisma.$transaction([
+        // A. Mark Subscription as Past Due
+        this.prisma.subscription.update({
+          where: { id: sub.id },
+          data: { status: 'past_due', isActive: false }
+        }),
+
+        // B.LOCK SOCIAL PROFILES (Stops Background Workers)
+        // This prevents the system from posting for non-paying users
+        this.prisma.socialProfile.updateMany({
+          where: { workspace: { organizationId: sub.organizationId } },
+          data: { isActive: false }
+        }),
+
+        // C. Optional: Lock Organization Login
+        // this.prisma.organization.update({ ... })
+      ]);
+      
+      this.logger.log(`🔒 Locked Organization: ${sub.organizationId}`);
     }
   }
 }
