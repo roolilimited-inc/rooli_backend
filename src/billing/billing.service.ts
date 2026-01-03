@@ -325,7 +325,7 @@ export class BillingService {
     const payload = {
       email,
       amount: amountInKobo,
-      plan: plan.paystackPlanCodeNgn, // <--- EXPLICITLY USE NGN CODE
+      plan: plan.paystackPlanCodeNgn,
       reference,
       currency: 'NGN', // <--- Force NGN currency
       metadata: {

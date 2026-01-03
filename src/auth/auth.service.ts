@@ -36,17 +36,16 @@ export class AuthService {
     private readonly jwtService: JwtService,
     private readonly configService: ConfigService,
     private readonly emailService: MailService,
-    private readonly billingService: BillingService
+    private readonly billingService: BillingService,
   ) {}
 
-async register(registerDto: Register, ip: string) {
+  async register(registerDto: Register, ip: string) {
     const { email, password, firstName, lastName } = registerDto;
     const lowerEmail = email.toLowerCase();
 
     const geo = geoip.lookup(ip);
 
-   const timezone = geo?.timezone ?? 'Africa/Lagos';
-
+    const timezone = geo?.timezone ?? 'Africa/Lagos';
 
     const existingUser = await this.prisma.user.findUnique({
       where: { email: lowerEmail },
@@ -55,7 +54,7 @@ async register(registerDto: Register, ip: string) {
 
     const hashedPassword = await argon2.hash(password);
 
-    // Create User 
+    // Create User
     const newUser = await this.prisma.user.create({
       data: {
         email: lowerEmail,
@@ -91,8 +90,10 @@ async register(registerDto: Register, ip: string) {
     };
   }
 
-  async userOnboarding( dto: OnboardingDto) {
-    const user = await this.prisma.user.findUnique({ where: { email: dto.userEmail} });
+  async userOnboarding(dto: OnboardingDto) {
+    const user = await this.prisma.user.findUnique({
+      where: { email: dto.userEmail },
+    });
     if (!user) throw new NotFoundException('User not found');
 
     const selectedPlan = await this.prisma.plan.findUnique({
@@ -100,28 +101,26 @@ async register(registerDto: Register, ip: string) {
     });
     if (!selectedPlan) throw new BadRequestException('Invalid Plan selected');
 
-
     const orgName = dto.name;
     const workspaceName = dto.initialWorkspaceName || 'General';
     const orgSlug = await this.generateUniqueOrgSlug(orgName);
 
-     // 1. Update User Type
-      if (dto.userType) {
-        await this.prisma.user.update({
-          where: { id: user.id },
-          data: { userType: dto.userType },
-        });
-      }
+    // 1. Update User Type
+    if (dto.userType) {
+      await this.prisma.user.update({
+        where: { id: user.id },
+        data: { userType: dto.userType },
+      });
+    }
 
-      // 2. Fetch Roles inside transaction
-      const ownerRole = await this.prisma.role.findFirstOrThrow({ where: { name: 'OWNER', scope: 'ORGANIZATION' }});
-      const adminRole = await this.prisma.role.findFirstOrThrow({ where: { name: 'WORKSPACE_ADMIN', scope: 'WORKSPACE' }});
-
-
-    // TRANSACTION: Create Org, Workspace, BrandKit, update User
-    const result = await this.prisma.$transaction(async (tx) => {
-     
-      // 3. Create Org
+    const ownerRole = await this.prisma.role.findFirstOrThrow({
+      where: { name: 'OWNER', scope: 'ORGANIZATION' },
+    });
+    const adminRole = await this.prisma.role.findFirstOrThrow({
+      where: { name: 'WORKSPACE_ADMIN', scope: 'WORKSPACE' },
+    });
+    const txResult = await this.prisma.$transaction(async (tx) => {
+      // 1. Create Org
       const org = await tx.organization.create({
         data: {
           name: orgName,
@@ -130,46 +129,41 @@ async register(registerDto: Register, ip: string) {
           timezone: dto.timezone,
           status: 'PENDING_PAYMENT',
           members: {
-            create: {
-              userId: user.id,
-              roleId: ownerRole.id,
-            },
+            create: { userId: user.id, roleId: ownerRole.id },
           },
         },
       });
 
-      // 4. Create Default Workspace
+      // 2. Create Default Workspace
       const workspace = await tx.workspace.create({
         data: {
           name: workspaceName,
           slug: slugify(workspaceName, { lower: true }),
           organizationId: org.id,
           members: {
-            create: {
-              userId: user.id,
-              roleId: adminRole.id,
-            },
+            create: { userId: user.id, roleId: adminRole.id },
           },
         },
       });
 
-      // 5. Create Brand Kit
+      // 3. Create Brand Kit
       await tx.brandKit.create({
         data: { workspaceId: workspace.id, name: `${workspaceName} Brand Kit` },
       });
 
-       await tx.subscription.create({
+      // 4. Create Subscription
+      await tx.subscription.create({
         data: {
           organizationId: org.id,
           planId: selectedPlan.id,
-          status: 'incomplete', 
+          status: 'incomplete',
           isActive: false,
           currentPeriodStart: new Date(),
-          currentPeriodEnd: new Date(), // Expired immediately until payment
-        }
+          currentPeriodEnd: new Date(),
+        },
       });
 
-      // 6. Update User Context (Sticky Session)
+      // 5. Update User Context
       const updatedUser = await tx.user.update({
         where: { id: user.id },
         data: {
@@ -179,41 +173,40 @@ async register(registerDto: Register, ip: string) {
         include: { systemRole: true },
       });
 
-    // 7. Generate NEW Tokens (Now containing the OrgID and WorkspaceID)
-    const newTokens = await this.generateTokens(
-      updatedUser.id,
-      updatedUser.email,
-      org.id,
-      workspace.id,
-      updatedUser.refreshTokenVersion,
-    );
-
-    // Save new refresh token
-    await tx.user.update({
-      where: { id: user.id },
-      data: { refreshToken: await argon2.hash(newTokens.refreshToken) },
+      // Return everything we need for the next step
+      return { org, workspace, user: updatedUser };
     });
 
-    return {
-      user: updatedUser,
-      tokens: newTokens,
-      workspaceId: workspace.id,
-      org: org,
-    };
+    // 1. Generate Tokens (CPU Work)
+    const newTokens = await this.generateTokens(
+      txResult.user.id,
+      txResult.user.email,
+      txResult.org.id,
+      txResult.workspace.id,
+      txResult.user.refreshTokenVersion,
+    );
+
+    // 2. Hash Token
+    const hashedRefreshToken = await argon2.hash(newTokens.refreshToken);
+
+    // 3. Save Token
+    await this.prisma.user.update({
+      where: { id: user.id },
+      data: { refreshToken: hashedRefreshToken },
     });
 
     const paymentData = await this.billingService.initializePayment(
-       result.org.id,
-       selectedPlan.id,
-       result.user,
+      txResult.org.id,
+      selectedPlan.id,
+      txResult.user,
     );
 
     return {
-      user: this.toSafeUser(result.user),
-      ...result.tokens,
-      activeWorkspaceId: result.workspaceId,
+      user: this.toSafeUser(txResult.user),
+      ...newTokens,
+      activeWorkspaceId: txResult.workspace.id,
       paymentUrl: paymentData.paymentUrl,
-      reference: paymentData.reference
+      reference: paymentData.reference,
     };
   }
 
@@ -326,7 +319,10 @@ async register(registerDto: Register, ip: string) {
 
       await this.prisma.user.update({
         where: { id: user.id },
-        data: { lastActiveAt: new Date(), lastActiveWorkspaceId: context.workspaceId },
+        data: {
+          lastActiveAt: new Date(),
+          lastActiveWorkspaceId: context.workspaceId,
+        },
       });
 
       return {
@@ -345,22 +341,22 @@ async register(registerDto: Register, ip: string) {
   async handleSocialLogin(googleUser: any, ip: string) {
     const lowerEmail = googleUser.email.toLowerCase();
 
-      const geo = geoip.lookup(ip);
+    const geo = geoip.lookup(ip);
     const timezone = geo?.timezone ?? 'Africa/Lagos';
-    
+
     // A. Check if user exists
     let user = await this.prisma.user.findUnique({
       where: { email: lowerEmail },
       include: {
         systemRole: true,
         workspaceMemberships: {
-            take: 1,
-            orderBy: { createdAt: 'desc' },
-            include: { workspace: true },
+          take: 1,
+          orderBy: { createdAt: 'desc' },
+          include: { workspace: true },
         },
         organizationMemberships: {
-            take: 1,
-            orderBy: { createdAt: 'desc' },
+          take: 1,
+          orderBy: { createdAt: 'desc' },
         },
       },
     });
@@ -378,10 +374,13 @@ async register(registerDto: Register, ip: string) {
       );
 
       await this.updateRefreshToken(user.id, tokens.refreshToken);
-      
+
       // Update Avatar if missing
       if (!user.avatar) {
-          await this.prisma.user.update({ where: { id: user.id }, data: { avatar: googleUser.picture }});
+        await this.prisma.user.update({
+          where: { id: user.id },
+          data: { avatar: googleUser.picture },
+        });
       }
 
       return {
@@ -404,7 +403,7 @@ async register(registerDto: Register, ip: string) {
         userType: 'INDIVIDUAL',
         //systemRoleId: (await this.fetchSystemRole('user')).id,
       },
-      include: { systemRole: true }
+      include: { systemRole: true },
     });
 
     const tokens = await this.generateTokens(
@@ -420,7 +419,7 @@ async register(registerDto: Register, ip: string) {
       user: this.toSafeUser(newUser),
       ...tokens,
       organizationId: null, // Force redirect to Onboarding
-      activeWorkspaceId: null
+      activeWorkspaceId: null,
     };
   }
 
@@ -501,7 +500,10 @@ async register(registerDto: Register, ip: string) {
     return { accessToken, refreshToken };
   }
 
-  async updateRefreshToken(userId: string, refreshToken: string): Promise<void> {
+  async updateRefreshToken(
+    userId: string,
+    refreshToken: string,
+  ): Promise<void> {
     const hash = await argon2.hash(refreshToken);
     await this.prisma.user.update({
       where: { id: userId },
@@ -773,7 +775,7 @@ async register(registerDto: Register, ip: string) {
       avatar: user.avatar,
       isEmailVerified: user.isEmailVerified,
       lastActiveAt: user.lastActiveAt,
-      userType: user.userType
+      userType: user.userType,
     };
   }
 
