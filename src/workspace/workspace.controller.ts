@@ -34,10 +34,10 @@ export class WorkspaceController {
   })
   @ApiParam({ name: 'orgId', description: 'Organization ID' })
   async findAll(
-    @CurrentUser() user: { id: string },
+    @CurrentUser() user: { userId: string },
     @Param('orgId') orgId: string,
   ) {
-    return this.workspaceService.findAll(orgId, user.id);
+    return this.workspaceService.findAll(orgId, user.userId);
   }
 
 
