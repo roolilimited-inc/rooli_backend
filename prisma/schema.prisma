@@ -26,13 +26,7 @@ model User {
 
   // Email verification
   isEmailVerified         Boolean   @default(false)
-  emailVerificationToken  String?
-  emailVerificationSentAt DateTime?
   refreshToken            String?
-
-  // Password reset
-  resetPasswordToken   String?
-  resetPasswordExpires DateTime?
 
   // Security
   loginAttempts       Int       @default(0)
