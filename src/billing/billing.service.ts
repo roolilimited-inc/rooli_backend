@@ -44,6 +44,12 @@ export class BillingService {
         tier: plan.tier,
         interval: plan.interval,
         features: plan.features,
+        maxWorkspaces: plan.maxWorkspaces,
+
+        maxSocialProfilesPerWorkspace: plan.maxSocialProfilesPerWorkspace,
+        maxTeamMembers: plan.maxTeamMembers,
+
+        monthlyAiCredits: plan.monthlyAiCredits,
 
         // DYNAMIC CURRENCY LOGIC
         currency: isNigeria ? 'NGN' : 'USD',
@@ -373,11 +379,11 @@ export class BillingService {
     });
   }
 
-//@Cron(CronExpression.EVERY_DAY_AT_MIDNIGHT)
+  //@Cron(CronExpression.EVERY_DAY_AT_MIDNIGHT)
   async handleExpiredSubscriptions() {
     this.logger.log('🕵️ Running Daily Expiry Check...');
     const now = new Date();
-    
+
     // 1. Find subscriptions that just expired
     // We fetch them first so we know WHICH orgs to lock
     const expiredSubs = await this.prisma.subscription.findMany({
@@ -385,12 +391,14 @@ export class BillingService {
         status: 'active',
         currentPeriodEnd: { lt: now },
       },
-      select: { id: true, organizationId: true }
+      select: { id: true, organizationId: true },
     });
 
     if (expiredSubs.length === 0) return;
 
-    this.logger.warn(`Found ${expiredSubs.length} expired subscriptions. Locking accounts...`);
+    this.logger.warn(
+      `Found ${expiredSubs.length} expired subscriptions. Locking accounts...`,
+    );
 
     // 2. Process Locks (Using Promise.all for speed, or loop for safety)
     for (const sub of expiredSubs) {
@@ -398,20 +406,20 @@ export class BillingService {
         // A. Mark Subscription as Past Due
         this.prisma.subscription.update({
           where: { id: sub.id },
-          data: { status: 'past_due', isActive: false }
+          data: { status: 'past_due', isActive: false },
         }),
 
         // B.LOCK SOCIAL PROFILES (Stops Background Workers)
         // This prevents the system from posting for non-paying users
         this.prisma.socialProfile.updateMany({
           where: { workspace: { organizationId: sub.organizationId } },
-          data: { isActive: false }
+          data: { isActive: false },
         }),
 
         // C. Optional: Lock Organization Login
         // this.prisma.organization.update({ ... })
       ]);
-      
+
       this.logger.log(`🔒 Locked Organization: ${sub.organizationId}`);
     }
   }
