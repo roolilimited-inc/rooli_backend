@@ -11,7 +11,7 @@ export class MailService {
     await this.mailerService.sendMail({
       to: email,
       subject: 'Verify your Rooli account',
-      template: 'verify-email', // 👈 refers to templates/verify-email.hbs
+      template: 'verify-email',
       context: {
         verificationUrl,
       },
@@ -56,4 +56,21 @@ export class MailService {
       },
     });
   }
+
+async sendWelcomeEmail(email: string, userName: string, workspaceName: string) {
+  const appDashboardUrl = `${process.env.FRONTEND_URL}/dashboard`;
+
+  await this.mailerService.sendMail({
+    to: email,
+    subject: `Welcome to Rooli, ${userName}!`,
+    template: './welcome', 
+    context: {
+      userName,
+      workspaceName, 
+      appDashboardUrl, 
+      year: new Date().getFullYear(),
+    },
+  });
+}
+
 }

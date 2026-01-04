@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Welcome to Rooli!</title>
+  <style>
+    /* Mobile styles */
+    @media only screen and (max-width: 600px) {
+      .container { width: 100% !important; }
+      .content { padding: 20px !important; }
+    }
+  </style>
+</head>
+<body style="margin:0; padding:0; font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; background-color:#f4f7f6; color: #333333;">
+  
+  <div style="display:none; font-size:1px; color:#333333; line-height:1px; max-height:0px; max-width:0px; opacity:0; overflow:hidden;">
+    Your account is set up and ready to go. Log in to start managing your workspace.
+  </div>
+
+  <table width="100%" cellpadding="0" cellspacing="0" style="background-color:#f4f7f6; padding: 20px 0;">
+    <tr>
+      <td align="center">
+        <table class="container" width="600" cellpadding="0" cellspacing="0" style="background-color:#ffffff; border-radius:12px; overflow:hidden; box-shadow: 0 4px 12px rgba(0,0,0,0.05); max-width: 600px; width: 100%;">
+          
+          <tr>
+            <td style="padding: 30px 40px; text-align: center; border-bottom: 1px solid #f0f0f0;">
+              <img src="https://your-rooli-bucket.com/logo.png" alt="Rooli Logo" width="120" style="display: block; margin: 0 auto;">
+            </td>
+          </tr>
+
+          <tr>
+            <td class="content" style="padding:40px; text-align:left;">
+              <h1 style="color:#111111; margin-top:0; margin-bottom:20px; font-size: 24px; font-weight: 700;">Welcome, {{userName}}! 👋</h1>
+              
+              <p style="color:#555555; font-size:16px; line-height:1.6; margin-bottom:20px;">
+                We are thrilled to have you on board. Your workspace <strong>{{workspaceName}}</strong> has been successfully created.
+              </p>
+              
+              <p style="color:#555555; font-size:16px; line-height:1.6; margin-bottom:30px;">
+                You can now start scheduling posts, inviting team members, and organizing your content calendar.
+              </p>
+
+              <table width="100%" cellpadding="0" cellspacing="0">
+                <tr>
+                  <td align="center">
+                    <a href="{{appDashboardUrl}}" 
+                       style="background-color:#000000; color:#ffffff; padding:14px 30px; text-decoration:none; border-radius:6px; font-weight:600; display:inline-block; font-size:16px; mso-padding-alt:0;">
+                      Go to Dashboard &rarr;
+                    </a>
+                  </td>
+                </tr>
+              </table>
+
+              <p style="color:#999999; font-size:14px; margin-top:30px; text-align: center;">
+                If you have any questions, simply reply to this email or contact <a href="mailto:support@rooli.com" style="color:#000000; text-decoration:underline;">support@rooli.com</a>.
+              </p>
+            </td>
+          </tr>
+
+          <tr>
+            <td style="background-color:#f9f9f9; text-align:center; padding:20px; font-size:12px; color:#aaaaaa; border-top: 1px solid #eeeeee;">
+              <p style="margin: 0 0 10px 0;">© {{year}} Rooli Inc.</p>
+              <p style="margin: 0;">123 Your Street Address, City, Country</p>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>
