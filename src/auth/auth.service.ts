@@ -74,11 +74,10 @@ export class AuthService {
     const verificationToken = this.jwtService.sign(
       { sub: newUser.id },
       {
-        secret: this.configService.get('JWT_VERIFICATION_SECRET'),
+        secret: this.configService.get('JWT_SECRET'),
         expiresIn: '24h',
       },
     );
-
     // 5. Send Email
     this.emailService
       .sendVerificationEmail(newUser.email, verificationToken)
