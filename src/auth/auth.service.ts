@@ -133,7 +133,9 @@ export class AuthService {
     const adminRole = await this.prisma.role.findFirstOrThrow({
       where: { name: 'WORKSPACE_ADMIN', scope: 'WORKSPACE' },
     });
-    const txResult = await this.prisma.$transaction(async (tx) => {
+
+
+   const txResult = await this.prisma.$transaction(async (tx) => {
       // 1. Create Org
       const org = await tx.organization.create({
         data: {
@@ -187,11 +189,6 @@ export class AuthService {
         include: { systemRole: true },
       });
 
-      this.emailService
-        .sendWelcomeEmail(txResult.user.email, txResult.user.firstName, txResult.workspace.name)
-        .catch((e) => console.error(e));
-
-      // Return everything we need for the next step
       return { org, workspace, user: updatedUser };
     });
 
