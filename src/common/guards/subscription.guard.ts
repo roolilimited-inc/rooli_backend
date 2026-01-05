@@ -28,14 +28,21 @@ export class SubscriptionGuard implements CanActivate {
     // Safety check: If AuthGuard failed or user is missing, stop here.
     if (!user || !user.organizationId) return false;
 
-    // INSTEAD of querying the DB, check the user object attached by your AuthStrategy
-    // (You need to ensure your JWT Strategy includes 'subscriptionStatus' in the user object)
-    if (user.subscriptionStatus === 'active') {
-        return true;
+
+   if (user.subscriptionStatus === 'active') {
+      return true;
+    }
+
+    if (user.subscriptionStatus === 'inactive') {
+       throw new ForbiddenException({
+        code: 'PAYMENT_REQUIRED',
+        message: 'Your subscription is inactive or expired.',
+        action: 'REDIRECT_TO_BILLING'
+      });
     }
 
    // FALLBACK: Only query DB if the JWT info is missing or stale (Edge case)
-    // This reduces DB hits by 99%
+
     const sub = await this.prisma.subscription.findUnique({
       where: { organizationId: user.organizationId },
       select: { status: true, currentPeriodEnd: true }

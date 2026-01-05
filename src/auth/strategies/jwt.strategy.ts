@@ -62,6 +62,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
         userId: user.id,
         email: user.email,
         organizationId: null,
+        subscriptionStatus: 'inactive',
         roles: [],
         features: {}, // Default empty features
         limits: { maxWorkspaces: 0, maxTeamMembers: 0 }, // Strict limits
@@ -91,8 +92,14 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       throw new ForbiddenException('You are not a member of this organization');
     }
 
-    const org = membership.organization; // No TS error anymore!
-    const plan = org.subscription?.plan;
+    const org = membership.organization;
+    const sub = org.subscription;
+    const plan = sub?.plan;
+
+    // A subscription is valid if status is 'active' AND it hasn't expired
+    const isSubscriptionValid = 
+      sub?.status === 'active' && 
+      new Date() < sub.currentPeriodEnd;
 
     return {
       userId: user.id,
@@ -100,6 +107,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       organizationId: payload.orgId,
       roles: [membership.role.name],
       features: (plan?.features as unknown as PlanFeatures) || {},
+      subscriptionStatus: isSubscriptionValid ? 'active' : 'inactive',
       limits: {
         maxWorkspaces: plan?.maxWorkspaces || 1,
         maxTeamMembers: plan?.maxTeamMembers || 1,
