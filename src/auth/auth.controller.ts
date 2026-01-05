@@ -168,7 +168,8 @@ export class AuthController {
     },
   })
   async getProfile(@Req() req) {
-  return this.authService.getUserById(req.user.userId);
+  const result = await this.authService.getUserById(req.user.userId);
+  return {result, subscriptionStatus: req.user.subscriptionStatus}
   }
 
   @Get('google')

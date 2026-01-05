@@ -667,6 +667,12 @@ async getUserById(userId: string) {
       systemRoleId: true,
       isEmailVerified: true,
       isOnboardingComplete: true,
+      lastActiveWorkspaceId: true,
+      organizationMemberships: {
+        include: {
+          organization: true
+        }
+      }
     },
   });
 
@@ -682,6 +688,8 @@ async getUserById(userId: string) {
     role: user.systemRoleId,
     isEmailVerified: user.isEmailVerified,
     isOnboardingComplete: user.isOnboardingComplete,
+    lastActiveWorkspace: user.lastActiveWorkspaceId,
+    organizationId: user.organizationMemberships?.[0]?.organization?.id ?? null
   };
 }
 
