@@ -41,6 +41,7 @@ import { BullModule } from '@nestjs/bullmq';
 // import { WorkspaceModule } from './workspace/workspace.module';
 import { SocialConnectionModule } from './social-connection/social-connection.module';
 import { SocialProfileModule } from './social-profile/social-profile.module';
+import { SubscriptionGuard } from './common/guards/subscription.guard';
 
 @Module({
   imports: [
@@ -150,10 +151,10 @@ import { SocialProfileModule } from './social-profile/social-profile.module';
       provide: APP_GUARD,
       useClass: JwtAuthGuard,
     },
-    // {
-    //   provide: APP_GUARD,
-    //   useClass: SubscriptionGuard, // Applies to EVERYTHING by default
-    // },
+    {
+      provide: APP_GUARD,
+      useClass: SubscriptionGuard, // Applies to EVERYTHING by default
+    },
   ],
 })
 export class AppModule {}
