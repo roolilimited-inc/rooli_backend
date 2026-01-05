@@ -34,8 +34,7 @@ export class LinkedInService {
     const params = new URLSearchParams({
       response_type: 'code',
       client_id: this.config.get('LINKEDIN_CLIENT_ID'),
-      // redirect_uri: `${this.config.get('API_URL')}/api/v1/social-connections/callback/linkedin`,
-      redirect_uri: this.config.get('LINKEDIN_REDIRECT_URI'),
+      redirect_uri: `${this.config.get('API_URL')}/api/v1/social-connections/callback/linkedin`,
       state: state,
       scope: scopes,
     });
@@ -52,8 +51,7 @@ export class LinkedInService {
           new URLSearchParams({
             grant_type: 'authorization_code',
             code,
-            // redirect_uri: `${this.config.get('API_URL')}/api/v1/social-connections/callback/linkedin`,
-            redirect_uri: this.config.get('LINKEDIN_REDIRECT_URI'),
+            redirect_uri: `${this.config.get('API_URL')}/api/v1/social-connections/callback/linkedin`,
             client_id: this.config.get('LINKEDIN_CLIENT_ID'),
             client_secret: this.config.get('LINKEDIN_CLIENT_SECRET'),
           }),
