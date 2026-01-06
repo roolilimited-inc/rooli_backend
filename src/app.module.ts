@@ -42,6 +42,7 @@ import { BullModule } from '@nestjs/bullmq';
 import { SocialConnectionModule } from './social-connection/social-connection.module';
 import { SocialProfileModule } from './social-profile/social-profile.module';
 import { SubscriptionGuard } from './common/guards/subscription.guard';
+import { MetaWebhooksModule } from './meta-webhooks/meta-webhooks.module';
 
 @Module({
   imports: [
@@ -143,6 +144,8 @@ import { SubscriptionGuard } from './common/guards/subscription.guard';
     SocialConnectionModule,
 
     SocialProfileModule,
+
+    MetaWebhooksModule,
   ],
   controllers: [AppController],
   providers: [
