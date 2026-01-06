@@ -230,7 +230,7 @@ model SocialConnection {
 
 
   accessToken      String   @db.Text // Encrypted
-  refreshToken     String?  @db.Text // Encrypted
+  refreshToken     String?  @db.Text // Encrypted  //twitter access secret
   tokenExpiresAt   DateTime?
 
   // Relations
@@ -1177,7 +1177,7 @@ enum MessageStatus {
 }
 
 enum Platform {
-  X
+  TWITTER
   LINKEDIN
   FACEBOOK
   INSTAGRAM
