@@ -1,34 +1,87 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { MailerService } from '@nestjs-modules/mailer';
+import { ConfigService } from '@nestjs/config';
+import path from 'path';
+import { SendMailClient } from 'zeptomail';
+import * as fs from 'fs';
+import * as handlebars from 'handlebars';
 
 @Injectable()
 export class MailService {
-  constructor(private readonly mailerService: MailerService) {}
+  private readonly logger = new Logger(MailService.name);
+  private client: any;
 
-  async sendVerificationEmail(email: string, token: string) {
-    const verificationUrl = `${process.env.API_URL}/auth/verify-email?token=${token}`;
-
-    await this.mailerService.sendMail({
-      to: email,
-      subject: 'Verify your Rooli account',
-      template: 'verify-email',
-      context: {
-        verificationUrl,
-      },
+  constructor(private readonly configService: ConfigService) {
+    // Initialize ZeptoMail Client
+    this.client = new SendMailClient({
+      url: "https://api.zeptomail.com/v1.1/email",
+      token: this.configService.get<string>('ZEPTO_MAIL_TOKEN'),
     });
   }
 
-  async sendPasswordResetEmail(email: string, token: string) {
-    const resetUrl = `${process.env.FRONTEND_URL}/reset-password?token=${token}`;
+  /**
+   * Helper: Reads a .hbs file and compiles it with data
+   */
+  private async compileTemplate(templateName: string, context: any): Promise<string> {
+    const templatesDir = path.join(__dirname, 'templates'); // Ensures it looks in dist/templates
+    const templatePath = path.join(templatesDir, `${templateName}.hbs`);
+    
+    try {
+      const source = fs.readFileSync(templatePath, 'utf8');
+      const template = handlebars.compile(source);
+      return template(context);
+    } catch (error) {
+      this.logger.error(`Could not find or compile template: ${templateName}`, error);
+      throw error;
+    }
+  }
 
-    await this.mailerService.sendMail({
-      to: email,
-      subject: 'Reset your Rooli password',
-      template: './reset-password', // 👈 refers to templates/reset-password.hbs
-      context: {
-        resetUrl,
-      },
-    });
+  /**
+   * Helper: Sends the actual email via ZeptoMail
+   */
+  private async sendZeptoMail(to: string, subject: string, htmlBody: string) {
+    try {
+      await this.client.sendMail({
+        from: {
+          address: this.configService.get<string>('MAIL_FROM'),
+          name: "Rooli",
+        },
+        to: [
+          {
+            email_address: {
+              address: to,
+              name: "User", // You can make this dynamic if needed
+            },
+          },
+        ],
+        subject: subject,
+        htmlbody: htmlBody,
+      });
+      this.logger.log(`Email sent successfully to ${to}`);
+    } catch (error) {
+      this.logger.error('Error sending email via ZeptoMail', error);
+      throw error
+    }
+  }
+
+  // --- Public Methods (Refactored to use Zepto) ---
+
+  async sendVerificationEmail(email: string, token: string) {
+    const verificationUrl = `${this.configService.get('API_URL')}/auth/verify-email?token=${token}`;
+    
+    // 1. Compile Template
+    const html = await this.compileTemplate('verify-email', { verificationUrl });
+    
+    // 2. Send via Zepto
+    await this.sendZeptoMail(email, 'Verify your Rooli account', html);
+  }
+
+  async sendPasswordResetEmail(email: string, token: string) {
+    const resetUrl = `${this.configService.get('FRONTEND_URL')}/reset-password?token=${token}`;
+    
+    const html = await this.compileTemplate('reset-password', { resetUrl });
+    
+    await this.sendZeptoMail(email, 'Reset your Rooli password', html);
   }
 
   async sendInvitationEmail(payload: {
@@ -39,38 +92,35 @@ export class MailService {
     token: string;
     message: string;
   }) {
-    const invitationUrl = `${process.env.FRONTEND_URL}/accept-invitation?token=${payload.token}`;
+    const invitationUrl = `${this.configService.get('FRONTEND_URL')}/accept-invitation?token=${payload.token}`;
+    
+    const context = {
+      invitationUrl,
+      organizationName: payload.organizationName,
+      inviterName: payload.inviterName,
+      role: payload.role,
+      year: new Date().getFullYear(),
+      message: payload.message,
+      frontendUrl: this.configService.get('FRONTEND_URL'),
+    };
 
-    await this.mailerService.sendMail({
-      to: payload.to,
-      subject: `You're invited to join ${payload.organizationName} on Rooli`,
-      template: './invitation',
-      context: {
-        invitationUrl,
-        organizationName: payload.organizationName,
-        inviterName: payload.inviterName,
-        role: payload.role,
-        year: new Date().getFullYear(),
-        message: payload.message,
-        frontendUrl: process.env.FRONTEND_URL,
-      },
-    });
+    const html = await this.compileTemplate('invitation', context);
+    
+    await this.sendZeptoMail(payload.to, `You're invited to join ${payload.organizationName} on Rooli`, html);
   }
 
-async sendWelcomeEmail(email: string, userName: string, workspaceName: string) {
-  const appDashboardUrl = `${process.env.FRONTEND_URL}/dashboard`;
+  async sendWelcomeEmail(email: string, userName: string, workspaceName: string) {
+    const appDashboardUrl = `${this.configService.get('FRONTEND_URL')}/dashboard`;
 
-  await this.mailerService.sendMail({
-    to: email,
-    subject: `Welcome to Rooli, ${userName}!`,
-    template: './welcome', 
-    context: {
+    const context = {
       userName,
       workspaceName, 
       appDashboardUrl, 
       year: new Date().getFullYear(),
-    },
-  });
-}
+    };
 
+    const html = await this.compileTemplate('welcome', context);
+
+    await this.sendZeptoMail(email, `Welcome to Rooli, ${userName}!`, html);
+  }
 }
