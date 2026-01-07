@@ -73,6 +73,8 @@ export class InstagramService {
         }),
       );
 
+      console.log(userProfile)
+
       // GUARD: Ensure it is not a Personal account
       // "Instagram Login" flow supports BUSINESS and CREATOR.
       // Personal accounts might log in but will fail on publishing APIs.
@@ -91,6 +93,7 @@ export class InstagramService {
       };
 
     } catch (error) {
+      console.log(error)
       this.logger.error('IG (No-Page) Exchange Failed', error.response?.data || error.message);
       throw new BadRequestException(error.message || 'Failed to connect Instagram account');
     }

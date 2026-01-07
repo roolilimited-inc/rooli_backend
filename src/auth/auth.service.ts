@@ -670,6 +670,7 @@ export class AuthService {
         email: true,
         firstName: true,
         lastName: true,
+        userType: true,
         systemRoleId: true,
         isEmailVerified: true,
         isOnboardingComplete: true,
@@ -705,7 +706,8 @@ export class AuthService {
       lastActiveWorkspace: user.lastActiveWorkspaceId,
       organizationId:
         user.organizationMemberships?.[0]?.organization?.id ?? null,
-      allowedPlatforms: user.organizationMemberships?.[0]?.organization.subscription.plan.allowedPlatforms
+      allowedPlatforms: user.organizationMemberships?.[0]?.organization.subscription.plan.allowedPlatforms,
+      UserType: user.userType
     };
   }
 
