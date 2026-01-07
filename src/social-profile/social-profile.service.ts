@@ -17,7 +17,21 @@ export class SocialProfileService {
 
 async addProfilesToWorkspace(workspaceId: string, dto: BulkAddProfilesDto) {
 
-  await this.checkWorkspaceLimits(workspaceId, dto.platformIds.length);
+ const { remaining, allowedPlatforms } = await this.getWorkspaceLimitInfo(workspaceId);
+
+    // 2. CHECK 1: Is this Platform allowed?
+    if (!allowedPlatforms.includes(dto.platform)) {
+      throw new ForbiddenException(
+        `The ${dto.platform} platform is not available on your current plan. Please upgrade to connect X (Twitter).`
+      );
+    }
+
+    // 3. CHECK 2: Numeric Limits
+    if (dto.platformIds.length > remaining) {
+      throw new ForbiddenException(
+        `You have ${remaining} slots left, but tried to add ${dto.platformIds.length} profiles.`
+      );
+    }
 
   const importablePages = await this.connectionService.getImportablePages(dto.connectionId);
   
@@ -122,13 +136,16 @@ async addProfilesToWorkspace(workspaceId: string, dto: BulkAddProfilesDto) {
   // HELPERS
   // ===========================================================================
 
-  private async checkWorkspaceLimits(workspaceId: string, countToAdd: number) {
+private async getWorkspaceLimitInfo(workspaceId: string) {
     const workspace = await this.prisma.workspace.findUnique({
       where: { id: workspaceId },
       include: { 
         organization: { 
-          include: { subscription: { include: { plan: true } } } 
-        } 
+          include: { 
+            subscription: { include: { plan: true } } 
+          } 
+        },
+        _count: { select: { socialProfiles: true } }
       }
     });
 
@@ -136,20 +153,17 @@ async addProfilesToWorkspace(workspaceId: string, dto: BulkAddProfilesDto) {
 
     const plan = workspace.organization.subscription?.plan;
     
-    // Fallback if no plan found (shouldn't happen with correct onboarding)
-    const limit = plan?. maxSocialProfilesPerWorkspace || 3; 
+    const limit = plan?.maxSocialProfilesPerWorkspace;
+    const allowed = plan?.allowedPlatforms || []; 
 
+    const current = workspace._count.socialProfiles;
 
-    const currentCount = await this.prisma.socialProfile.count({
-      where: { workspaceId }
-    });
-
-
-    if (currentCount + countToAdd > limit) {
-      throw new ForbiddenException(
-        `Cannot add ${countToAdd} profiles. You have ${limit - currentCount} slots remaining.`
-      );
-    }
+    return {
+      limit,
+      current,
+      remaining: limit === -1 ? 9999 : Math.max(0, limit - current),
+      allowedPlatforms: allowed 
+    };
   }
 
   private mapAccountType(providerType: string, platform: string): any {
