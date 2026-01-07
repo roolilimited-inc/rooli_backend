@@ -1,60 +1,68 @@
-import { PrismaService } from "@/prisma/prisma.service";
-import { Injectable, CanActivate, ExecutionContext, ForbiddenException } from "@nestjs/common";
-import { Reflector } from "@nestjs/core";
-import { BYPASS_SUB_KEY } from "../decorators/bypass-subscription.decorator";
+import { PrismaService } from '@/prisma/prisma.service';
+import {
+  Injectable,
+  CanActivate,
+  ExecutionContext,
+  ForbiddenException,
+} from '@nestjs/common';
+import { Reflector } from '@nestjs/core';
+import { BYPASS_SUB_KEY } from '../decorators/bypass-subscription.decorator';
 
 @Injectable()
 export class SubscriptionGuard implements CanActivate {
   constructor(
     private readonly prisma: PrismaService,
-    private readonly reflector: Reflector
+    private readonly reflector: Reflector,
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
     // 1. Allow endpoints marked as Public or specifically for Billing
-    const isPublic = this.reflector.get<boolean>('isPublic', context.getHandler());
-    if (isPublic) return true;
-
-    // 2. Check for "Bypass" routes (Billing, Profile Settings)
-    const bypassSubscription = this.reflector.getAllAndOverride<boolean>(BYPASS_SUB_KEY, [
+    const isPublic = this.reflector.getAllAndOverride<boolean>('isPublic', [
       context.getHandler(),
       context.getClass(),
     ]);
+    if (isPublic) return true;
+
+    // 2. Check for "Bypass" routes (Billing, Profile Settings)
+    const bypassSubscription = this.reflector.getAllAndOverride<boolean>(
+      BYPASS_SUB_KEY,
+      [context.getHandler(), context.getClass()],
+    );
     if (bypassSubscription) return true;
 
-   const request = context.switchToHttp().getRequest();
-    const user = request.user; 
+    const request = context.switchToHttp().getRequest();
+    const user = request.user;
 
     // Safety check: If AuthGuard failed or user is missing, stop here.
     if (!user || !user.organizationId) return false;
 
-
-   if (user.subscriptionStatus === 'active') {
+    if (user.subscriptionStatus === 'active') {
       return true;
     }
 
     if (user.subscriptionStatus === 'inactive') {
-       throw new ForbiddenException({
+      throw new ForbiddenException({
         code: 'PAYMENT_REQUIRED',
         message: 'Your subscription is inactive or expired.',
-        action: 'REDIRECT_TO_BILLING'
+        action: 'REDIRECT_TO_BILLING',
       });
     }
 
-   // FALLBACK: Only query DB if the JWT info is missing or stale (Edge case)
+    // FALLBACK: Only query DB if the JWT info is missing or stale (Edge case)
 
     const sub = await this.prisma.subscription.findUnique({
       where: { organizationId: user.organizationId },
-      select: { status: true, currentPeriodEnd: true }
+      select: { status: true, currentPeriodEnd: true },
     });
 
-    const isValid = sub && sub.status === 'active' && sub.currentPeriodEnd > new Date();
+    const isValid =
+      sub && sub.status === 'active' && sub.currentPeriodEnd > new Date();
 
     if (!isValid) {
       throw new ForbiddenException({
         code: 'PAYMENT_REQUIRED',
         message: 'Your subscription has expired.',
-        action: 'REDIRECT_TO_BILLING'
+        action: 'REDIRECT_TO_BILLING',
       });
     }
 
