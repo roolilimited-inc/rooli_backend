@@ -134,8 +134,7 @@ export class AuthService {
       where: { name: 'WORKSPACE_ADMIN', scope: 'WORKSPACE' },
     });
 
-
-   const txResult = await this.prisma.$transaction(async (tx) => {
+    const txResult = await this.prisma.$transaction(async (tx) => {
       // 1. Create Org
       const org = await tx.organization.create({
         data: {
@@ -437,7 +436,7 @@ export class AuthService {
       ...tokens,
       organizationId: null, // Force redirect to Onboarding
       lastActiveWorkspaceId: null,
-      isOnboardingComplete: false
+      isOnboardingComplete: false,
     };
   }
 
@@ -656,43 +655,52 @@ export class AuthService {
     }
   }
 
-async getUserById(userId: string) {
-  const user = await this.prisma.user.findUnique({
-    where: { id: userId },
-    select: {
-      id: true,
-      email: true,
-      firstName: true,
-      lastName: true,
-      systemRoleId: true,
-      isEmailVerified: true,
-      isOnboardingComplete: true,
-      lastActiveWorkspaceId: true,
-      organizationMemberships: {
-        include: {
-          organization: true
-        }
-      }
-    },
-  });
+  async getUserById(userId: string) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: {
+        id: true,
+        email: true,
+        firstName: true,
+        lastName: true,
+        systemRoleId: true,
+        isEmailVerified: true,
+        isOnboardingComplete: true,
+        lastActiveWorkspaceId: true,
+        organizationMemberships: {
+          include: {
+            organization: {
+              include: {
+                subscription: {
+                  include: {
+                    plan: true,
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    });
 
-  if (!user) {
-    throw new NotFoundException('User not found');
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
+    return {
+      id: user.id,
+      email: user.email,
+      firstName: user.firstName,
+      lastName: user.lastName,
+      role: user.systemRoleId,
+      isEmailVerified: user.isEmailVerified,
+      isOnboardingComplete: user.isOnboardingComplete,
+      lastActiveWorkspace: user.lastActiveWorkspaceId,
+      organizationId:
+        user.organizationMemberships?.[0]?.organization?.id ?? null,
+      allowedPlatforms: user.organizationMemberships?.[0]?.organization.subscription.plan.allowedPlatforms
+    };
   }
-
-  return {
-    id: user.id,
-    email: user.email,
-    firstName: user.firstName,
-    lastName: user.lastName,
-    role: user.systemRoleId,
-    isEmailVerified: user.isEmailVerified,
-    isOnboardingComplete: user.isOnboardingComplete,
-    lastActiveWorkspace: user.lastActiveWorkspaceId,
-    organizationId: user.organizationMemberships?.[0]?.organization?.id ?? null
-  };
-}
-
 
   async resendVerificationEmail(email: string): Promise<void> {
     const user = await this.prisma.user.findUnique({
