@@ -38,7 +38,6 @@ export class WebhookController {
   @Post('paystack')
 @UseGuards(PaystackWebhookGuard)
 async handlePaystack(@Body() payload: any) {
-  console.log(payload)
   // 1. Log Raw Data
   const log = await this.prisma.webhookLog.create({
     data: {
