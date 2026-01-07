@@ -29,14 +29,17 @@ import { Login } from './dtos/Login.dto';
 import { Register } from './dtos/Register.dto';
 import { ResetPassword } from './dtos/ResetPassword.dto';
 import { Public } from '../common/decorators/public.decorator';
-import { User } from '@generated/client';
 import { AuthGuard } from '@nestjs/passport';
 import { OnboardingDto } from './dtos/user-onboarding.dto';
+import { ConfigService } from '@nestjs/config';
 
 @ApiTags('Authentication')
 @Controller('auth')
 export class AuthController {
-  constructor(private authService: AuthService) {}
+  constructor(
+    private authService: AuthService,
+    private readonly configService: ConfigService,
+  ) {}
 
   @Post('register')
   @Public()
@@ -47,7 +50,10 @@ export class AuthController {
       'Registers a user with email/password and sends verification email',
   })
   @ApiBody({ type: Register, description: 'User registration data' })
-  async register(@Body() registerDto: Register, @Ip() ip: string): Promise<AuthResponse> {
+  async register(
+    @Body() registerDto: Register,
+    @Ip() ip: string,
+  ): Promise<AuthResponse> {
     return this.authService.register(registerDto, ip);
   }
 
@@ -83,7 +89,7 @@ export class AuthController {
     return this.authService.refreshTokens(refreshToken);
   }
 
-  @Post('verify-email')
+  @Get('verify-email')
   @Public()
   @ApiOperation({
     summary: 'Verify user email',
@@ -92,9 +98,11 @@ export class AuthController {
   @ApiQuery({ name: 'token', example: 'random_verification_token' })
   async verifyEmail(
     @Query('token') token: string,
+    @Res() res,
   ): Promise<{ message: string }> {
     await this.authService.verifyEmail(token);
-    return { message: 'Email verified successfully' };
+    const frontendUrl = this.configService.get<string>('FRONTEND_URL');
+    return res.redirect(`${frontendUrl}/onboarding?verified=true`);
   }
 
   @Post('forgot-password')
@@ -168,8 +176,8 @@ export class AuthController {
     },
   })
   async getProfile(@Req() req) {
-  const result = await this.authService.getUserById(req.user.userId);
-  return {result, subscriptionStatus: req.user.subscriptionStatus}
+    const result = await this.authService.getUserById(req.user.userId);
+    return { result, subscriptionStatus: req.user.subscriptionStatus };
   }
 
   @Get('google')
@@ -200,20 +208,21 @@ export class AuthController {
     description: 'Successfully authenticated using Google',
   })
   async googleAuthRedirect(@Req() req, @Res() res) {
-  
     // 1. Get the IP for geolocation
     const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
 
     // 2. Pass the WHOLE user object (not .userId)
-    const result = await this.authService.handleSocialLogin(req.user, ip);  
+    const result = await this.authService.handleSocialLogin(req.user, ip);
 
     const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
 
     // Determine where to land (Onboarding if no Org, Dashboard if Org exists)
-    const nextPath = result.isOnboardingComplete ? '/dashboard' : '/auth/onboarding';
-    
+    const nextPath = result.isOnboardingComplete
+      ? '/dashboard'
+      : '/auth/onboarding';
+
     return res.redirect(
-      `${frontendUrl}?accessToken=${result.accessToken}&refreshToken=${result.refreshToken}&next=${nextPath}`
+      `${frontendUrl}?accessToken=${result.accessToken}&refreshToken=${result.refreshToken}&next=${nextPath}`,
     );
   }
 
@@ -221,8 +230,7 @@ export class AuthController {
   @ApiBearerAuth()
   @ApiOperation({
     summary: 'User Onboarding',
-    description:
-      'Onboarding for the new user',
+    description: 'Onboarding for the new user',
   })
   @ApiResponse({
     status: 201,
