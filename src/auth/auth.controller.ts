@@ -31,6 +31,7 @@ import { Public } from '../common/decorators/public.decorator';
 import { AuthGuard } from '@nestjs/passport';
 import { OnboardingDto } from './dtos/user-onboarding.dto';
 import { ConfigService } from '@nestjs/config';
+import { BypassSubscription } from '@/common/decorators/bypass-subscription.decorator';
 
 @ApiTags('Authentication')
 @Controller('auth')
@@ -160,6 +161,7 @@ export class AuthController {
 
   @Get('profile')
   @ApiBearerAuth()
+  @BypassSubscription()
   @ApiOperation({ summary: 'Get current user profile' })
   @ApiResponse({
     status: 200,
@@ -227,6 +229,7 @@ export class AuthController {
   }
 
   @Post('onboarding')
+  @BypassSubscription()
   @ApiBearerAuth()
   @ApiOperation({
     summary: 'User Onboarding',

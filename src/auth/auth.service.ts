@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   Injectable,
   InternalServerErrorException,
   Logger,
@@ -247,11 +248,16 @@ export class AuthService {
         },
       },
     });
-
+    
     if (!user) throw new UnauthorizedException('Invalid credentials');
 
     const validPass = await argon2.verify(user.password, loginDto.password);
     if (!validPass) throw new UnauthorizedException('Invalid credentials');
+
+    // 1. CHECK VERIFICATION STATUS
+    if (!user.isEmailVerified) {
+      await this.handleUnverifiedLogin(user);
+    }
 
     // 2. Resolve Context (Sticky Session -> Fallback)
     const context = await this.resolveLoginContext(user);
@@ -279,6 +285,7 @@ export class AuthService {
       ...tokens,
       user: this.toSafeUser(user),
       lastActiveWorkspaceId: context.workspaceId,
+      isOnboardingComplete: user.isOnboardingComplete
     };
   }
 
@@ -702,23 +709,6 @@ export class AuthService {
     };
   }
 
-  async resendVerificationEmail(email: string): Promise<void> {
-    const user = await this.prisma.user.findUnique({
-      where: { email: email.toLowerCase() },
-    });
-
-    if (!user || user.isEmailVerified) return;
-
-    // 1. Generate JWT (Stateless)
-    const payload = { sub: user.id };
-    const token = this.jwtService.sign(payload, {
-      secret: this.configService.get('JWT_SECRET'),
-      expiresIn: '24h',
-    });
-
-    // Send Email
-    await this.emailService.sendVerificationEmail(user.email, token);
-  }
 
   validatePasswordStrength(password: string): void {
     if (password.length < 8) {
@@ -741,6 +731,67 @@ export class AuthService {
         'Password must contain at least 3 of the following: lowercase, uppercase, numbers, special characters',
       );
     }
+  }
+
+  /**
+   * Handles the logic for unverified users attempting to login.
+   * Throws an exception to stop the login process.
+   */
+  private async handleUnverifiedLogin(user: any) {
+    const now = new Date();
+    const lastSent = user.lastVerificationEmailSentAt;
+    
+    //  If sent within the last 24 hours, do NOT resend.
+    // 24 hours in milliseconds = 24 * 60 * 60 * 1000
+    const cooldownPeriod = 24 * 60 * 60 * 1000; 
+
+    if (lastSent && (now.getTime() - lastSent.getTime() < cooldownPeriod)) {
+      // 24h hasn't passed. Tell them to check their existing email.
+      throw new ForbiddenException({
+        message: 'Please verify your email. A verification link was already sent to your inbox.',
+        error: 'EMAIL_NOT_VERIFIED',
+        resendAvailable: false // Frontend can hide the "Resend" button
+      });
+    }
+
+    // If we are here, either they never got an email, or 24h has passed.
+    // We send a NEW email and update the timestamp.
+    await this.resendVerificationEmail(user.email);
+
+    throw new ForbiddenException({
+      message: 'Email not verified. We have sent a new verification link to your inbox.',
+      error: 'EMAIL_NOT_VERIFIED',
+      resendAvailable: false
+    });
+  }
+
+  
+  async resendVerificationEmail(email: string): Promise<void> {
+    const user = await this.prisma.user.findUnique({
+      where: { email: email.toLowerCase() },
+    });
+
+    if (!user || user.isEmailVerified) return;
+
+    // 1. Generate JWT
+    const token = this.jwtService.sign(
+      { sub: user.id },
+      {
+        secret: this.configService.get('JWT_SECRET'),
+        expiresIn: '24h',
+      },
+    );
+
+    // 2. Update Timestamp in DB 
+    await this.prisma.user.update({
+      where: { id: user.id },
+      data: { lastVerificationEmailSentAt: new Date() },
+    });
+
+    // 3. Send Email
+    await this.emailService.sendVerificationEmail(user.email, token);
+    
+    this.logger.log(`Verification email resent to ${user.email}`);
   }
 
   private toSafeUser(user): SafeUser {

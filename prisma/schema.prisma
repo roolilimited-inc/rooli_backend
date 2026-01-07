@@ -20,6 +20,8 @@ model User {
   systemRoleId String?
   systemRole   Role?    @relation("UserSystemRole", fields: [systemRoleId], references: [id])
 
+lastVerificationEmailSentAt DateTime?
+
   // Tracks which Workspace (Client) the user was looking at last
   lastActiveWorkspaceId    String?
   lastActiveWorkspace      Workspace?    @relation("UserLastActiveWorkspace", fields: [lastActiveWorkspaceId], references: [id], onDelete: SetNull)
