@@ -22,7 +22,6 @@ import {
 } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
 import { AuthService } from './auth.service';
-import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { AuthResponse } from './dtos/AuthResponse.dto';
 import { ForgotPassword } from './dtos/ForgotPassword.dto';
 import { Login } from './dtos/Login.dto';
