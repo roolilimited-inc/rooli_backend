@@ -13,10 +13,15 @@ import {
   BulkValidationError,
   PreparedPost,
 } from './interfaces/post.interface';
+import { InjectQueue } from '@nestjs/bullmq';
+import { Queue } from 'bullmq';
 
 @Injectable()
 export class PostService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    @InjectQueue('media-ingest') private mediaIngestQueue: Queue,
+  ) {}
 
   async createPost(user: User, workspaceId: string, dto: CreatePostDto) {
     // FEATURE VALIDATION
@@ -80,11 +85,11 @@ export class PostService {
 
       // --- Destinations for Master ---
       const destinationData = validProfiles.map((profile) => ({
-      postId: post.id,
-      socialProfileId: profile.id,
-      status: PostStatus.SCHEDULED 
-    }));
-    await tx.postDestination.createMany({ data: destinationData });
+        postId: post.id,
+        socialProfileId: profile.id,
+        status: PostStatus.SCHEDULED,
+      }));
+      await tx.postDestination.createMany({ data: destinationData });
 
       // --- Approval Workflow ---
       if (dto.needsApproval) {
@@ -129,11 +134,11 @@ export class PostService {
 
           // Destinations for Thread (same as master)
           const threadDestinations = validProfiles.map((profile) => ({
-          postId: threadPost.id,
-          socialProfileId: profile.id,
-          status: PostStatus.SCHEDULED, 
-        }));
-        await tx.postDestination.createMany({ data: threadDestinations });
+            postId: threadPost.id,
+            socialProfileId: profile.id,
+            status: PostStatus.SCHEDULED,
+          }));
+          await tx.postDestination.createMany({ data: threadDestinations });
 
           previousPostId = threadPost.id; // link next thread
         }
@@ -314,6 +319,9 @@ export class PostService {
       }
     }
 
+    // Define a list to hold jobs we need to trigger AFTER the transaction succeeds
+    const backgroundJobs: { mediaId: string; workspaceId: string }[] = [];
+
     // SAVE TO DB
     await this.prisma.$transaction(async (tx) => {
       for (const post of posts) {
@@ -324,17 +332,43 @@ export class PostService {
             authorId: user.id,
             content: post.content,
             scheduledAt: post.scheduledAt,
-            status: 'SCHEDULED',
+            status: 'SCHEDULED', // Safe to use here
             timezone: 'UTC',
           },
         });
 
-        // 2. Handle Media (If URL provided)
-        // Since it's a CSV URL, we assume it's external.
-        // Ideally, you'd trigger a background job here to "Ingest" that URL to your S3.
+        // 2. Handle Media (Placeholder + Link)
         if (post.mediaUrl) {
-          // Option A: Just save the URL temporarily in metadata
-          // Option B: Create a MediaFile (if your model supports external URLs)
+          // A. Create the Placeholder MediaFile
+          // ⚠️ Must provide ALL required fields with dummy data
+          const mediaFile = await tx.mediaFile.create({
+            data: {
+              workspaceId,
+              userId: user.id,
+              url: post.mediaUrl, // The External URL
+
+              // Dummy Metadata (Required for DB Constraint)
+              filename: 'csv_import_pending',
+              originalName: 'external_image',
+              mimeType: 'image/jpeg',
+              size: 0,
+              publicId: `external_${Date.now()}_${Math.random().toString(36).substring(7)}`,
+              isAIGenerated: false,
+            },
+          });
+
+          // B. 🔗 LINK IT TO THE POST (Critical Step!)
+          // Without this, the post doesn't know it has media
+          await tx.postMedia.create({
+            data: {
+              postId: createdPost.id,
+              mediaFileId: mediaFile.id,
+              order: 0,
+            },
+          });
+
+          // C. Add to our "To-Do" list (don't add to Queue yet)
+          backgroundJobs.push({ mediaId: mediaFile.id, workspaceId });
         }
 
         // 3. Create Destinations
@@ -348,7 +382,14 @@ export class PostService {
       }
     });
 
-    return { status: 'SUCCESS', count: posts.length };
+    // 🚀 4. TRIGGER BACKGROUND JOBS (Safe Zone)
+    // We only reach here if the transaction committed successfully
+    if (backgroundJobs.length > 0) {
+      // Use Promise.all to fire them rapidly
+      await Promise.all(
+        backgroundJobs.map((job) => this.mediaIngestQueue.add('ingest', job)),
+      );
+    }
   }
 
   private ensureBulkFeature(user: any) {

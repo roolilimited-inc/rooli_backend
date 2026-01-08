@@ -18,7 +18,6 @@ import { FeatureGuard } from '@/common/guards/feature.guard';
 import { CreatePostDto } from './dto/request/create-post.dto';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { ApiStandardResponse } from '@/common/decorators/api-standard-response.decorator';
-import { User } from '@generated/client';
 import { ApiOperation, ApiParam, ApiConsumes, ApiBody } from '@nestjs/swagger';
 import { BulkExecuteResponseDto } from './dto/response/bulk-execute.response.dto';
 import { BulkValidateResponseDto } from './dto/response/bulk-validate.dto';
@@ -81,7 +80,6 @@ export class PostController {
     if (!file) throw new BadRequestException('CSV file is required');
     return this.postService.validateBulkCsv(user, workspaceId, file.buffer);
   }
-
 
   @Post('bulk/execute')
   @RequireFeature('bulkScheduling')
