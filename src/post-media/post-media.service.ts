@@ -5,7 +5,7 @@ import { v2 as cloudinary } from 'cloudinary';
 import * as streamifier from 'streamifier';
 
 @Injectable()
-export class MediaService {
+export class PostMediaService {
   constructor(private prisma: PrismaService) {}
 
   // ==========================================
