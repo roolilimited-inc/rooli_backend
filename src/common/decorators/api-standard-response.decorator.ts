@@ -1,4 +1,3 @@
-// common/decorators/api-standard-response.decorator.ts
 import { applyDecorators, Type } from '@nestjs/common';
 import { ApiOkResponse, getSchemaPath, ApiExtraModels } from '@nestjs/swagger';
 import { ApiResponseDto } from '../dtos/api-response.dto';
