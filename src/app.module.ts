@@ -43,6 +43,7 @@ import { SocialConnectionModule } from './social-connection/social-connection.mo
 import { SocialProfileModule } from './social-profile/social-profile.module';
 import { SubscriptionGuard } from './common/guards/subscription.guard';
 import { MetaWebhooksModule } from './meta-webhooks/meta-webhooks.module';
+import { PostModule } from './post/post.module';
 
 @Module({
   imports: [
@@ -146,6 +147,8 @@ import { MetaWebhooksModule } from './meta-webhooks/meta-webhooks.module';
     SocialProfileModule,
 
     MetaWebhooksModule,
+
+    PostModule,
   ],
   controllers: [AppController],
   providers: [

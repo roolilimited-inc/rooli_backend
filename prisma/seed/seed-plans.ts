@@ -95,6 +95,7 @@ export async function seedPlans() {
         advancedAnalytics: true,
         approvalWorkflow: true,
         bulkScheduling: true,
+        mediaLibrary: true
       },
 
       isActive: true,
@@ -124,6 +125,7 @@ export async function seedPlans() {
         advancedAnalytics: true,
         approvalWorkflow: true,
         bulkScheduling: true,
+        mediaLibrary: true,
       },
 
       isActive: true,
@@ -157,6 +159,10 @@ export async function seedPlans() {
         approvalWorkflow: true,
         whiteLabelReports: true,
         prioritySupport: true,
+        hasCampaigns: true, 
+        hasLabels: true,
+        mediaLibrary: true,
+        bulkScheduling: true,
       },
 
       isActive: true,
@@ -187,6 +193,10 @@ export async function seedPlans() {
         approvalWorkflow: true,
         whiteLabelReports: true,
         prioritySupport: true,
+        hasCampaigns: true,
+        hasLabels: true,
+       mediaLibrary: true,
+        bulkScheduling: true,
       },
 
       isActive: true,
@@ -229,6 +239,10 @@ export async function seedPlans() {
         dedicatedAccountManager: true,
         sla: true,
         customIntegrations: true,
+       hasCampaigns: true, 
+        hasLabels: true,
+        mediaLibrary: true,
+        bulkScheduling: true,
       },
       
       // HIDDEN FROM PUBLIC UI

@@ -146,6 +146,11 @@ model Workspace {
 
   members  WorkspaceMember[]
 
+  queueSlots     QueueSlot[]
+  campaigns      Campaign[]
+  labels         Label[]
+
+
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
@@ -287,120 +292,300 @@ model SocialProfile {
 }
 
 
+// ==========================================
+// 1. CAMPAIGNS & ORGANIZATION
+// ==========================================
+
+model Campaign {
+  id          String   @id @default(cuid())
+  workspaceId String
+  name        String
+  description String?
+  color       String?  @default("#1877F2") // For Calendar UI
+  startDate   DateTime
+  endDate     DateTime?
+  status      CampaignStatus @default(ACTIVE)
+
+  posts       Post[]
+  
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([workspaceId, status])
+}
+
+model Label {
+  id          String   @id @default(cuid())
+  workspaceId String
+  name        String
+  color       String   @default("#000000")
+
+  posts       Post[]   // Many-to-Many (Implicit is fine here)
+
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, name])
+}
+
+// ==========================================
+// 2. THE POSTING ENGINE
+// ==========================================
+
 model Post {
   id              String      @id @default(cuid())
+  workspaceId     String
   authorId        String?
-  socialAccountId String
-  pageAccountId   String?
-  content         String
-  contentType     ContentType @default(POST)
-  platform        Platform
-  mediaFileIds    MediaFile[]
-  scheduledAt     DateTime?
-  timezone        String
-  publishedAt     DateTime?
+  
+  // 📝 CONTENT
+  // The "Master" content. Platform-specific versions live in PostDestination.
+  content         String      @db.Text 
+  
+  // 🖼️ MEDIA
+  // We use a join table to ensure ORDER (Critical for Carousels)
+  media           PostMedia[] 
+
+  // ⚙️ TYPE & STATE
+  contentType     ContentType @default(POST) // REEL, STORY, THREAD, POST
   status          PostStatus  @default(DRAFT)
-  errorMessage    String?
+  
+  // 🗓️ SCHEDULING
+  scheduledAt     DateTime?   // The intended publish time
+  publishedAt     DateTime?   // When it actually went out
+  timezone        String      @default("UTC")
+  isAutoSchedule  Boolean     @default(false) // If true, uses QueueSlot
+  
+  // 🚨 ERROR HANDLING
+  errorMessage    String?     // General error (if all failed)
+  maxRetries      Int         @default(3)
   retryCount      Int         @default(0)
-  metadata        Json?
+
+  // 🧵 THREADS (X/Twitter)
+  parentPostId    String? 
+  parentPost      Post?       @relation("PostThread", fields: [parentPostId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  childPosts      Post[]      @relation("PostThread")
+
+  // 🔗 RELATIONS
+  destinations    PostDestination[]
+  campaignId      String?
+  campaign        Campaign?   @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+  labels          Label[]
+  approvals       PostApproval[]
+
+  // AI & ANALYTICS
+  aiContentId     String?              @unique
+  aiContent       AiContentGeneration? @relation(fields: [aiContentId], references: [id])
+  
+  // Aggregated stats (Sum of all destinations)
+  totalLikes         Int @default(0)
+  totalImpressions   Int @default(0)
+  totalClicks        Int @default(0)
+  engagementRate     Float @default(0.0)
+
+  workspace       Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  author          User?     @relation(fields: [authorId], references: [id], onDelete: Cascade)
+
   createdAt       DateTime    @default(now())
   updatedAt       DateTime    @updatedAt
 
-  isAutoSchedule Boolean @default(false)
-  // 🔗 THE OMNICHANNEL LINK
-  destinations  PostDestination[]
-
-  maxRetries Int @default(3)
-
-  // Platform metadata
-  platformPostId String? // ID returned by platform after publishing
-
-  parentPostId String? // Points to the previous tweet in the thread
-  parentPost   Post?   @relation("PostThread", fields: [parentPostId], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  childPosts   Post[]  @relation("PostThread")
-
-  // RELATIONS
-  author        User?                   @relation(fields: [authorId], references: [id], onDelete: Cascade)
-  approvals     PostApproval[]
-  snapShots     PostAnalyticsSnapshot[]
-
-  jobId       String?
-  queueStatus ScheduleJobStatus @default(PENDING)
-
-  lastAnalyticsCheck DateTime?
-  nextAnalyticsCheck DateTime? @default(now())
-  analyticsPriority  Int       @default(1)
-
-  // These represent the LATEST known state.
-  // Updated every time you create a new Snapshot.
-  currentLikes       Int @default(0)
-  currentComments    Int @default(0)
-  currentShares      Int @default(0)
-  currentImpressions Int @default(0)
-  currentReach       Int @default(0)
-  currentClicks      Int @default(0)
-
-  // Calculated field for sorting "Best Performing"
-  engagementRate Float @default(0.0)
-
-  // AI relations
-  aiContentId        String?              @unique
-  aiContent          AiContentGeneration? @relation(fields: [aiContentId], references: [id])
-  aiImageGenerations AiImageGeneration[]
-
-  //notifications NotificationEntity[]
-
- workspaceId String
-  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-
-  @@index([socialAccountId, status, scheduledAt])
-  @@index([workspaceId, status])
-  @@index([status, scheduledAt])
-  @@index([status, nextAnalyticsCheck])
-  @@index([socialAccountId, scheduledAt])
-  @@index([jobId])
+  @@index([workspaceId, status, scheduledAt])
+  @@index([campaignId])
 }
 
 model PostDestination {
   id              String         @id @default(cuid())
   postId          String
-  socialProfileId String         // Which specific account is this for?
+  socialProfileId String         // The specific account (Nike FB, Nike IG)
 
-  // 🎨 PLATFORM SPECIFIC OVERRIDES (Requirement: "AI Copy Suggestions")
-  // Allows different text for Twitter (short) vs LinkedIn (long)
+  // 🎨 OVERRIDES
+  // If null, falls back to Post.content
   contentOverride String?        @db.Text 
-
-  // Twitter might fail, while Facebook succeeds. We need to track them separately.
+  
+  // 🚦 STATUS
   status          PublishStatus  @default(SCHEDULED)
-  platformPostId  String?        // The ID given by FB/Twitter after posting (for analytics)
-  errorMessage    String?        // "Image aspect ratio not supported"
+  platformPostId  String?        // The ID from FB/LinkedIn after posting
+  platformUrl     String?        // Link to the live post
+  errorMessage    String?        
+
+  // 📊 PER-DESTINATION ANALYTICS
+  // We track stats per destination because FB performance != LinkedIn performance
+  likes           Int @default(0)
+  comments        Int @default(0)
+  shares          Int @default(0)
+  impressions     Int @default(0)
+  clicks          Int @default(0)
 
   post            Post           @relation(fields: [postId], references: [id], onDelete: Cascade)
-  profile         SocialProfile  @relation(fields: [socialProfileId], references: [id])
+  profile         SocialProfile  @relation(fields: [socialProfileId], references: [id], onDelete: Cascade)
 
-  @@unique([postId, socialProfileId]) // Prevent duplicate sending to same profile
+  updatedAt       DateTime       @updatedAt
+
+  @@unique([postId, socialProfileId]) 
+  @@index([status])
 }
+
+// 🖼️ Explicit Join for Media Ordering
+model PostMedia {
+  id          String    @id @default(cuid())
+  postId      String
+  mediaFileId String
+  order       Int       @default(0) // 0 = Cover image, 1 = Next, etc.
+
+  post        Post      @relation(fields: [postId], references: [id], onDelete: Cascade)
+  mediaFile   MediaFile @relation(fields: [mediaFileId], references: [id], onDelete: Cascade)
+
+  @@unique([postId, mediaFileId])
+  @@index([postId, order])
+}
+
+// ==========================================
+// 3. MEDIA LIBRARY (Optimized)
+// ==========================================
+
+model MediaFolder {
+  id          String   @id @default(cuid())
+  workspaceId String
+  name        String
+  parentId    String?
+
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  parent      MediaFolder?  @relation("FolderHierarchy", fields: [parentId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  children    MediaFolder[] @relation("FolderHierarchy")
+  files       MediaFile[]
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([workspaceId, parentId, name])
+}
+
+model MediaFile {
+  id              String    @id @default(cuid())
+  workspaceId     String
+  userId          String
+  folderId        String?
+  
+  filename        String
+  originalName    String
+  mimeType        String    // image/jpeg, video/mp4
+  size            BigInt
+  url             String    // Cloudinary/S3 URL
+  publicId        String    // For Cloudinary deletion
+  thumbnailUrl    String?
+  
+  width           Int?      // Important for aspect ratio checks
+  height          Int?
+  duration        Int?      // In seconds (for Videos)
+
+  // AI Context
+  isAIGenerated   Boolean   @default(false)
+  aiGenerationId  String?
+  
+  postUsage       PostMedia[] // Relation to posts
+
+  folder          MediaFolder? @relation(fields: [folderId], references: [id], onDelete: SetNull)
+  user            User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  workspace       Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  
+  // (Optional) Relation to your existing AI generation model
+  aiImageGeneration AiImageGeneration? @relation(fields: [aiGenerationId], references: [id], onDelete: SetNull)
+
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@index([workspaceId, mimeType])
+}
+
+// ==========================================
+// 4. QUEUE & SCHEDULING RULES
+// ==========================================
+
+model QueueSlot {
+  id          String    @id @default(cuid())
+  workspaceId String
+  
+  // "Every Monday"
+  dayOfWeek   DayOfWeek // Enum: MONDAY, TUESDAY...
+  time        String    // "09:00" (24h format)
+  timezone    String    // "Africa/Lagos"
+  
+  isActive    Boolean   @default(true)
+
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId, dayOfWeek])
+}
+
+// ==========================================
+// 5. APPROVALS (Updated)
+// ==========================================
 
 model PostApproval {
   id            String         @id @default(cuid())
   postId        String
   requesterId   String
   approverId    String?
-  status        ApprovalStatus @default(PENDING)
-  comments      String?
+  
+  status        ApprovalStatus @default(PENDING) // PENDING, APPROVED, REJECTED
+  
+  notes         String?        @db.Text // "Please change the image"
+  
   requestedAt   DateTime       @default(now())
   reviewedAt    DateTime?
-  revisionNotes String?        @db.Text
 
-  post      Post  @relation(fields: [postId], references: [id], onDelete: Cascade)
-  requester User  @relation("ApprovalRequester", fields: [requesterId], references: [id])
-  approver  User? @relation("ApprovalApprover", fields: [approverId], references: [id])
+  post          Post           @relation(fields: [postId], references: [id], onDelete: Cascade)
+  requester     User           @relation("ApprovalRequester", fields: [requesterId], references: [id])
+  approver      User?          @relation("ApprovalApprover", fields: [approverId], references: [id])
 
-  @@unique([postId])
-  @@index([status, requestedAt])
-  @@index([requesterId, status])
+  @@unique([postId]) // One active approval process per post
 }
 
+// ==========================================
+// 6. CONTENT TEMPLATES (Your existing one was good, minor cleanup)
+// ==========================================
+
+model ContentTemplate {
+  id             String  @id @default(cuid())
+  organizationId String?
+  userId         String
+  
+  name           String
+  description    String?
+  
+  // Usage Metadata
+  platform       Platform
+  contentType    ContentType
+  category       TemplateCategory
+  tags           String[]
+  
+  content        Json // Structured content
+  
+  isPublic       Boolean        @default(false)
+  usageCount     Int            @default(0)
+  
+  organization   Organization? @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user           User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  favorites      UserFavoriteTemplate[]
+
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([organizationId, platform])
+  @@index([isPublic, category])
+}
+
+model UserFavoriteTemplate {
+  id         String   @id @default(cuid())
+  userId     String
+  templateId String
+
+  user       User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  template   ContentTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, templateId])
+}
 model PublishingMetric {
   id             String   @id @default(uuid())
   organizationId String
@@ -413,60 +598,6 @@ model PublishingMetric {
   organization Organization @relation(fields: [organizationId], references: [id])
 
   @@index([organizationId, platform, timestamp])
-}
-
-model MediaFolder {
-  id             String  @id @default(cuid())
-  name           String
-  parentId       String?
-
-  workspaceId String
-  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  parent       MediaFolder?  @relation("FolderHierarchy", fields: [parentId], references: [id], onDelete: NoAction)
-  children     MediaFolder[] @relation("FolderHierarchy")
-  files        MediaFile[]
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  @@unique([workspaceId, parentId, name])
-  @@index([workspaceId])
-  @@index([parentId])
-}
-
-model MediaFile {
-  id                  String    @id @default(cuid())
-  userId              String
-  filename            String
-  originalName        String
-  mimeType            String
-  size                BigInt
-  url                 String
-  publicId            String
-  thumbnailUrl        String?
-  folderId            String?
-  duration            Int?
-  metadata            Json?
-  createdAt           DateTime  @default(now())
-  updatedAt           DateTime  @updatedAt
-  expiresAt           DateTime?
-  isAIGenerated       Boolean   @default(false)
-  aiGenerationContext Json?
-  // Not unique to allow multiple files per generation:
-  aiGenerationId      String?
-  posts               Post[]
-
-  folder MediaFolder? @relation(fields: [folderId], references: [id], onDelete: SetNull)
-
-  // Relation field (many media files -> one generation)
-  aiImageGeneration AiImageGeneration? @relation(fields: [aiGenerationId], references: [id], onDelete: SetNull)
-
-  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
-  workspaceId String
-  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-
-  @@index([isAIGenerated])
-  @@index([workspaceId, isAIGenerated])
 }
 
 
@@ -635,7 +766,7 @@ model AiImageGeneration {
   user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   postId String?
-  post   Post?   @relation(fields: [postId], references: [id])
+  //post   Post?   @relation(fields: [postId], references: [id])
 
   brandKitId String?
   brandKit   BrandKit? @relation(fields: [brandKitId], references: [id], onDelete: SetNull)
@@ -725,71 +856,6 @@ model AIUsage {
 //   @@index([sentAt]) // For global search/sorting
 // }
 
-model ContentTemplate {
-  id             String  @id @default(cuid())
-  organizationId String?
-  userId         String
-  name           String
-  description    String?
-  version        Int     @default(1) // For template versioning
-
-  // Template metadata
-  platform    Platform
-  contentType ContentType
-  category    TemplateCategory
-  tags        String[]
-
-  // Template content - enhanced structure
-  content   Json // TemplateContent structure
-  example   String? @db.Text // Example filled template
-  variables Json? // Variable definitions for validation
-
-  // Status & usage
-  isPublic      Boolean        @default(false)
-  status        TemplateStatus @default(DRAFT)
-  usageCount    Int            @default(0)
-  lastUsedAt    DateTime?
-  favoriteCount Int            @default(0) // Track popularity
-
-  // Brand integration
-  brandKitId String?
-
-  // Timestamps
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  // Relations
-  organization Organization? @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
-  brandKit     BrandKit?     @relation(fields: [brandKitId], references: [id], onDelete: SetNull)
-
-  // Add template favorites for users
-  favorites UserFavoriteTemplate[]
-
-  @@index([organizationId, platform, contentType])
-  @@index([isPublic, platform, category, status])
-  @@index([userId, status])
-  @@index([tags])
-  @@index([brandKitId])
-  @@index([favoriteCount]) // For popular templates
-  @@index([usageCount]) // For most used templates
-}
-
-// Add favorite system
-model UserFavoriteTemplate {
-  id         String   @id @default(cuid())
-  userId     String
-  templateId String
-  createdAt  DateTime @default(now())
-
-  user     User            @relation(fields: [userId], references: [id], onDelete: Cascade)
-  template ContentTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
-
-  @@unique([userId, templateId])
-  @@index([userId])
-  @@index([templateId])
-}
-
 model PlatformRateLimitLog {
   id              String   @id @default(cuid())
   platform        Platform
@@ -820,7 +886,7 @@ model PostAnalyticsSnapshot {
   reach       Int @default(0)
   clicks      Int @default(0)
 
-  post Post @relation(fields: [postId], references: [id], onDelete: Cascade)
+  //post Post @relation(fields: [postId], references: [id], onDelete: Cascade)
 
   @@index([postId, recordedAt])
 }
@@ -997,7 +1063,7 @@ model BrandKit {
     workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   aiContentGenerations AiContentGeneration[]
   aiImageGenerations   AiImageGeneration[]
-  ContentTemplate      ContentTemplate[]
+  //ContentTemplate      ContentTemplate[]
 
   @@index([isActive])
 }
@@ -1068,25 +1134,63 @@ enum SocialProfileType {
 }
 
 enum UserType {
-  INDIVIDUAL // Regular business (1 Org limit)
-  AGENCY // Manages multiple clients (Multiple Orgs allowed)
+  INDIVIDUAL
+  AGENCY 
+}
+
+enum ContentType {
+  POST
+  REEL
+  STORY
+  THREAD
 }
 
 enum PostStatus {
   DRAFT
   PENDING_APPROVAL
   SCHEDULED
+  PUBLISHING  // Currently uploading
   PUBLISHED
-  PARTIALLY_PUBLISHED
   FAILED
 }
 
 enum PublishStatus {
   SCHEDULED
-  PUBLISHING
   SUCCESS
   FAILED
 }
+
+enum ApprovalStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum CampaignStatus {
+  ACTIVE
+  PAUSED
+  COMPLETED
+  ARCHIVED
+}
+
+enum DayOfWeek {
+  MONDAY
+  TUESDAY
+  WEDNESDAY
+  THURSDAY
+  FRIDAY
+  SATURDAY
+  SUNDAY
+}
+
+enum TemplateCategory {
+  SALES
+  EDUCATIONAL
+  HOLIDAY
+  INSPIRATIONAL
+  // ... others
+}
+
 
 enum RoleScope {
   SYSTEM
@@ -1103,12 +1207,6 @@ enum QueueStatus {
   RETRYING
 }
 
-enum ApprovalStatus {
-  PENDING
-  APPROVED
-  REJECTED
-  CHANGES_REQUESTED
-}
 
 enum ScheduleSource {
   MANUAL
@@ -1199,13 +1297,6 @@ enum ScheduleJobStatus {
   RETRYING
 }
 
-enum ContentType {
-  POST
-  STORY
-  REEL
-  CAROUSEL
-  THREAD
-}
 
 enum ToneType {
   PROFESSIONAL
@@ -1343,19 +1434,6 @@ enum PermissionAction {
   APPROVE
   PUBLISH
   EXPORT
-}
-
-enum TemplateCategory {
-  PROMOTIONAL
-  EDUCATIONAL
-  ENGAGEMENT
-  ANNOUNCEMENT
-  EVENT
-  PRODUCT
-  TESTIMONIAL
-  UGC
-  HOLIDAY
-  INDUSTRY_NEWS
 }
 
 enum TemplateStatus {
