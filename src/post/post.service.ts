@@ -1,5 +1,5 @@
 import { PrismaService } from '@/prisma/prisma.service';
-import { User } from '@generated/client';
+import { PostStatus, User } from '@generated/client';
 import {
   BadRequestException,
   ForbiddenException,
@@ -8,21 +8,25 @@ import {
 import { CreatePostDto } from './dto/request/create-post.dto';
 import csv from 'csv-parser';
 import { Readable } from 'stream';
-import { BulkCsvRow, BulkValidationError, PreparedPost } from './interfaces/post.interface';
+import {
+  BulkCsvRow,
+  BulkValidationError,
+  PreparedPost,
+} from './interfaces/post.interface';
 
 @Injectable()
 export class PostService {
   constructor(private prisma: PrismaService) {}
 
   async createPost(user: User, workspaceId: string, dto: CreatePostDto) {
-    //  VALIDATE: Feature Access
+    // FEATURE VALIDATION
     this.validateFeatures(user, dto);
 
-    // VALIDATE: Do these profiles belong to this workspace?
+    // PROFILE VALIDATION
     const validProfiles = await this.prisma.socialProfile.findMany({
       where: {
         id: { in: dto.socialProfileIds },
-        workspaceId: workspaceId,
+        workspaceId,
       },
       select: { id: true },
     });
@@ -35,60 +39,54 @@ export class PostService {
 
     // DETERMINE STATUS
     let status: 'DRAFT' | 'SCHEDULED' | 'PENDING_APPROVAL' = 'DRAFT';
-
     if (dto.needsApproval) {
       status = 'PENDING_APPROVAL';
     } else if (dto.scheduledAt || dto.isAutoSchedule) {
       status = 'SCHEDULED';
     }
 
-    // TRANSACTION: Create everything at once
+    //TRANSACTION: MASTER POST + MEDIA + DESTINATIONS + THREADS + APPROVAL
     return this.prisma.$transaction(async (tx) => {
-      //  Create the Master Post
+      // --- Master Post ---
       const post = await tx.post.create({
         data: {
           workspaceId,
           authorId: user.id,
           content: dto.content,
           contentType: dto.contentType,
-          status: status,
+          status,
           scheduledAt: dto.scheduledAt ? new Date(dto.scheduledAt) : null,
           isAutoSchedule: dto.isAutoSchedule,
           timezone: dto.timezone,
           campaignId: dto.campaignId,
 
-          // Labels (Connect existing labels)
+          // Labels
           labels: dto.labelIds
-            ? {
-                connect: dto.labelIds.map((id) => ({ id })),
-              }
+            ? { connect: dto.labelIds.map((id) => ({ id })) }
             : undefined,
         },
       });
 
-      //  Link Media (Preserve Order!)
-      if (dto.mediaIds && dto.mediaIds.length > 0) {
-        // We map them explicitly to save the 'order' index
-        const mediaData = dto.mediaIds.map((mediaId, index) => ({
-          postId: post.id,
-          mediaFileId: mediaId,
-          order: index, // 0, 1, 2... Critical for Carousels
-        }));
-
-        await tx.postMedia.createMany({ data: mediaData });
+      // --- Media for Master ---
+      if (dto.mediaIds?.length) {
+        await tx.postMedia.createMany({
+          data: dto.mediaIds.map((mediaId, index) => ({
+            postId: post.id,
+            mediaFileId: mediaId,
+            order: index,
+          })),
+        });
       }
 
-      // Create Destinations (The "Omnichannel" part)
-      // We create one entry for every profile selected (FB, IG, LinkedIn)
+      // --- Destinations for Master ---
       const destinationData = validProfiles.map((profile) => ({
-        postId: post.id,
-        socialProfileId: profile.id,
-        status: 'SCHEDULED' as const, // Default state
-      }));
+      postId: post.id,
+      socialProfileId: profile.id,
+      status: PostStatus.SCHEDULED 
+    }));
+    await tx.postDestination.createMany({ data: destinationData });
 
-      await tx.postDestination.createMany({ data: destinationData });
-
-      // D. Handle Approval (If requested)
+      // --- Approval Workflow ---
       if (dto.needsApproval) {
         await tx.postApproval.create({
           data: {
@@ -99,7 +97,48 @@ export class PostService {
         });
       }
 
-      // Return the full object
+      // --- Threads (if any) ---
+      if (dto.threads?.length) {
+        let previousPostId = post.id;
+
+        for (const threadItem of dto.threads) {
+          const threadPost = await tx.post.create({
+            data: {
+              workspaceId,
+              authorId: user.id,
+              content: threadItem.content,
+              contentType: 'THREAD',
+              status,
+              scheduledAt: post.scheduledAt,
+              timezone: post.timezone,
+              parentPostId: previousPostId,
+              campaignId: dto.campaignId,
+            },
+          });
+
+          // Media for Thread
+          if (threadItem.mediaIds?.length) {
+            await tx.postMedia.createMany({
+              data: threadItem.mediaIds.map((mediaId, index) => ({
+                postId: threadPost.id,
+                mediaFileId: mediaId,
+                order: index,
+              })),
+            });
+          }
+
+          // Destinations for Thread (same as master)
+          const threadDestinations = validProfiles.map((profile) => ({
+          postId: threadPost.id,
+          socialProfileId: profile.id,
+          status: PostStatus.SCHEDULED, 
+        }));
+        await tx.postDestination.createMany({ data: threadDestinations });
+
+          previousPostId = threadPost.id; // link next thread
+        }
+      }
+
       return post;
     });
   }
@@ -229,49 +268,51 @@ export class PostService {
       throw new BadRequestException('No posts provided');
 
     // ==================================================
-  //  SECURITY CHECK 1: OWNERSHIP RE-VALIDATION
-  // ==================================================
-  
-  // Extract all unique Profile IDs the user is trying to touch
-  const requestedProfileIds = new Set<string>();
-  posts.forEach(p => p.profileIds.forEach(id => requestedProfileIds.add(id)));
-  const uniqueIds = Array.from(requestedProfileIds);
+    //  SECURITY CHECK 1: OWNERSHIP RE-VALIDATION
+    // ==================================================
 
-  // Ask DB: "Count how many of THESE IDs belong to THIS Workspace"
-  const count = await this.prisma.socialProfile.count({
-    where: {
-      id: { in: uniqueIds },
-      workspaceId: workspaceId, 
-    },
-  });
-
-  // If the DB found fewer profiles than requested, someone is lying (or spoofing)
-  if (count !== uniqueIds.length) {
-    throw new ForbiddenException(
-      'Security Alert: One or more profiles do not belong to this workspace.'
+    // Extract all unique Profile IDs the user is trying to touch
+    const requestedProfileIds = new Set<string>();
+    posts.forEach((p) =>
+      p.profileIds.forEach((id) => requestedProfileIds.add(id)),
     );
-  }
+    const uniqueIds = Array.from(requestedProfileIds);
 
-  // ==================================================
-  // SECURITY CHECK 2: TIME & CONTENT
-  // ==================================================
-  const now = new Date();
-  
-  // Quick in-memory loop (very fast)
-  for (const post of posts) {
-    const scheduledAt = new Date(post.scheduledAt);
-    
-    // Check for "Time Travel" or delayed submission
-    if (scheduledAt < now) {
-      throw new BadRequestException(
-        'One or more posts are scheduled in the past. Please re-upload.'
+    // Ask DB: "Count how many of THESE IDs belong to THIS Workspace"
+    const count = await this.prisma.socialProfile.count({
+      where: {
+        id: { in: uniqueIds },
+        workspaceId: workspaceId,
+      },
+    });
+
+    // If the DB found fewer profiles than requested, someone is lying (or spoofing)
+    if (count !== uniqueIds.length) {
+      throw new ForbiddenException(
+        'Security Alert: One or more profiles do not belong to this workspace.',
       );
     }
 
-    if (!post.content) {
-       throw new BadRequestException('Content is missing in payload');
+    // ==================================================
+    // SECURITY CHECK 2: TIME & CONTENT
+    // ==================================================
+    const now = new Date();
+
+    // Quick in-memory loop (very fast)
+    for (const post of posts) {
+      const scheduledAt = new Date(post.scheduledAt);
+
+      // Check for "Time Travel" or delayed submission
+      if (scheduledAt < now) {
+        throw new BadRequestException(
+          'One or more posts are scheduled in the past. Please re-upload.',
+        );
+      }
+
+      if (!post.content) {
+        throw new BadRequestException('Content is missing in payload');
+      }
     }
-  }
 
     // SAVE TO DB
     await this.prisma.$transaction(async (tx) => {

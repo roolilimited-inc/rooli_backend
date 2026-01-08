@@ -6,9 +6,32 @@ import {
   IsNotEmpty,
   IsOptional,
   IsString,
+  ValidateNested,
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { ContentType } from '@generated/enums';
+import { Type } from 'class-transformer';
+
+export class ThreadItemDto {
+  @ApiProperty({
+    description: 'Text content of the thread item',
+    example: 'This is a comment in the thread',
+  })
+  @IsNotEmpty()
+  @IsString()
+  content: string;
+
+  @ApiPropertyOptional({
+    description:
+      'Optional media IDs attached to this thread item. Order may determine display order.',
+    example: ['media_1', 'media_2'],
+    type: [String],
+  })
+  @IsArray()
+  @IsString({ each: true })
+  @IsOptional()
+  mediaIds?: string[];
+}
 
 export class CreatePostDto {
   @ApiProperty({
@@ -29,12 +52,8 @@ export class CreatePostDto {
   contentType?: ContentType = ContentType.POST;
 
   @ApiProperty({
-    description:
-      'List of SocialProfile IDs this post should be published to',
-    example: [
-      'cl9abc123facebook_page_id',
-      'cl9xyz456linkedin_profile_id',
-    ],
+    description: 'List of SocialProfile IDs this post should be published to',
+    example: ['cl9abc123facebook_page_id', 'cl9xyz456linkedin_profile_id'],
     type: [String],
   })
   @IsArray()
@@ -82,8 +101,7 @@ export class CreatePostDto {
   timezone: string = 'UTC';
 
   @ApiPropertyOptional({
-    description:
-      'Campaign ID (Rocket plan feature) for grouping posts',
+    description: 'Campaign ID (Rocket plan feature) for grouping posts',
     example: 'cmp_123456',
   })
   @IsOptional()
@@ -101,11 +119,20 @@ export class CreatePostDto {
   labelIds?: string[];
 
   @ApiPropertyOptional({
-    description:
-      'Whether the post requires approval before publishing',
+    description: 'Whether the post requires approval before publishing',
     example: true,
   })
   @IsOptional()
   @IsBoolean()
   needsApproval?: boolean;
+
+  @ApiPropertyOptional({
+    description: 'The chain of replies for this post',
+    type: [ThreadItemDto],
+  })
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => ThreadItemDto)
+  @IsOptional()
+  threads?: ThreadItemDto[];
 }
