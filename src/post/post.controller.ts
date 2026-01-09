@@ -13,6 +13,7 @@ import {
   BadRequestException,
   Delete,
   Patch,
+  Query,
 } from '@nestjs/common';
 import { PostService } from './post.service';
 import { RequireFeature } from '@/common/decorators/require-feature.decorator';
@@ -25,9 +26,10 @@ import { BulkExecuteResponseDto } from './dto/response/bulk-execute.response.dto
 import { BulkValidateResponseDto } from './dto/response/bulk-validate.dto';
 import { CurrentUser } from '@/common/decorators/current-user.decorator';
 import { ExecuteBulkScheduleDto } from './dto/request/execute-bulk-schedule.dto';
-import { file } from 'pdfkit';
 import { UpdatePostDto } from './dto/request/update-post.dto';
 import { PostDto } from './dto/response/post.dto';
+import { ApiPaginatedResponse } from '@/common/decorators/api-paginated-response.decorator';
+import { GetWorkspacePostsDto } from './dto/request/get-all-posts.dto';
 
 @Controller('workspaces/:workspaceId/posts')
 @UseGuards(FeatureGuard)
@@ -35,7 +37,9 @@ export class PostController {
   constructor(private readonly postService: PostService) {}
 
   @Post()
-  create(
+  @ApiOperation({ summary: 'Create a new post in the workspace' })
+  @ApiStandardResponse(PostDto)
+  async create(
     @Request() req,
     @Param('workspaceId') workspaceId: string,
     @Body() dto: CreatePostDto,
@@ -44,8 +48,10 @@ export class PostController {
   }
 
   @Get()
-  findAll(@Param('workspaceId') workspaceId: string) {
-    return this.postService.getWorkspacePosts(workspaceId);
+  @ApiOperation({ summary: 'Get all posts in the workspace' })
+  @ApiPaginatedResponse(PostDto)
+  async findAll(@Param('workspaceId') workspaceId: string, @Query() query: GetWorkspacePostsDto,) {
+    return this.postService.getWorkspacePosts(workspaceId, query);
   }
 
 

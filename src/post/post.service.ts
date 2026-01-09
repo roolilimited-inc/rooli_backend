@@ -17,6 +17,8 @@ import {
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import { UpdatePostDto } from './dto/request/update-post.dto';
+import { GetWorkspacePostsDto } from './dto/request/get-all-posts.dto';
+import { QueryMode } from '@generated/internal/prismaNamespace';
 
 @Injectable()
 export class PostService {
@@ -173,18 +175,52 @@ export class PostService {
     }
   }
 
-  async getWorkspacePosts(workspaceId: string) {
-    return this.prisma.post.findMany({
-      where: { workspaceId },
+async getWorkspacePosts(
+  workspaceId: string,
+  dto: GetWorkspacePostsDto,
+) {
+  const { page, limit, status, contentType, search } = dto;
+
+  const where = {
+    workspaceId,
+    ...(status && { status }),
+    ...(contentType && { contentType }),
+    ...(search && {
+      content: { contains: search, mode: QueryMode.insensitive },
+    }),
+  };
+
+  const [items, total] = await this.prisma.$transaction([
+    this.prisma.post.findMany({
+      where,
       include: {
-        destinations: { include: { profile: true } }, // See where it's going
-        media: { include: { mediaFile: true }, orderBy: { order: 'asc' } }, // See images in order
+        destinations: { include: { profile: true } },
+        media: {
+          include: { mediaFile: true },
+          orderBy: { order: 'asc' },
+        },
         author: { select: { email: true, firstName: true } },
         campaign: true,
       },
       orderBy: { createdAt: 'desc' },
-    });
-  }
+      skip: (page - 1) * limit,
+      take: limit,
+    }),
+    this.prisma.post.count({ where }),
+  ]);
+
+  return {
+    data: items,
+    meta: {
+      page,
+      limit,
+      total,
+      totalPages: Math.ceil(total / limit),
+    },
+  };
+}
+
+
 
   async validateBulkCsv(user: any, workspaceId: string, fileBuffer: Buffer) {
     this.ensureBulkFeature(user);
