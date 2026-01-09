@@ -122,7 +122,7 @@ export class PostMediaController {
     return this.mediaService.uploadMany(req.user, wsId, files, folderId);
   }
 
-  @Get()
+  @Get('library')
   @ApiOperation({ summary: 'Get media library (files and folders)' })
   @ApiParam({ name: 'workspaceId', description: 'Workspace ID' })
   @ApiQuery({
