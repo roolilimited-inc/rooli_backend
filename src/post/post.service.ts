@@ -530,7 +530,7 @@ async getOne(workspaceId: string, postId: string) {
         }
       },
       
-      // INCLUDE PARENT (If I clicked a reply, show me what it replies to)
+      // INCLUDE PARENT 
       parentPost: true 
     }
   });
@@ -539,7 +539,128 @@ async getOne(workspaceId: string, postId: string) {
   return post;
 }
 
-  private ensureBulkFeature(user: any) {
+
+  // Get all pending approvals for a workspace
+async getPendingApprovals(
+  workspaceId: string,
+  pagination: { page: number; limit: number },
+) {
+  const { page, limit } = pagination;
+
+  const where = {
+    post: { workspaceId },
+    status: 'PENDING' as const,
+  };
+
+  const [items, total] = await this.prisma.$transaction([
+    this.prisma.postApproval.findMany({
+      where,
+      include: {
+        post: {
+          select: {
+            content: true,
+            scheduledAt: true,
+            contentType: true,
+          },
+        },
+        requester: {
+          select: {
+            id: true,
+            firstName: true,
+            email: true,
+          },
+        },
+      },
+      orderBy: { requestedAt: 'asc' },
+      skip: (page - 1) * limit,
+      take: limit,
+    }),
+
+    this.prisma.postApproval.count({ where }),
+  ]);
+
+  return {
+    data: items,
+    meta: {
+      page,
+      limit,
+      total,
+      totalPages: Math.ceil(total / limit),
+    },
+  };
+}
+
+
+  // Approve or Reject (The Decision)
+  async reviewApproval(
+    approver: User, 
+    workspaceId: string, 
+    approvalId: string,
+    status: 'APPROVED' | 'REJECTED', 
+    notes?: string
+  ) {
+    // Fetch Approval & Verify Workspace
+    const approval = await this.prisma.postApproval.findFirst({
+      where: { id: approvalId, post: { workspaceId } },
+      include: { post: true }
+    });
+
+    if (!approval) throw new NotFoundException('Approval request not found');
+    if (approval.status !== 'PENDING') throw new BadRequestException('Already reviewed');
+
+    return this.prisma.$transaction(async (tx) => {
+      //Update Approval Record
+      const updatedApproval = await tx.postApproval.update({
+        where: { id: approvalId },
+        data: {
+          status,
+          approverId: approver.id,
+          reviewedAt: new Date(),
+          notes: notes
+        }
+      });
+
+      // Update Post Status
+      // If Approved -> SCHEDULED
+      // If Rejected -> DRAFT (so they can edit and try again)
+      await tx.post.update({
+        where: { id: approval.postId },
+        data: {
+          status: status === 'APPROVED' ? 'SCHEDULED' : 'DRAFT'
+        }
+      });
+
+      return updatedApproval;
+    });
+  }
+
+  //  DELETE: Cancel a Request
+  async cancelApprovalRequest(userId: string, workspaceId: string, approvalId: string) {
+    const approval = await this.prisma.postApproval.findFirst({
+      where: { id: approvalId, post: { workspaceId } }
+    });
+
+    if (!approval) throw new NotFoundException('Request not found');
+    
+    // Security: Only the requester (or an Admin) should be able to cancel
+    if (approval.requesterId !== userId) {
+      throw new ForbiddenException('You are not authorized to cancel this request.');
+       // In a real app, check if user is Admin, otherwise throw Forbidden
+    }
+
+    return this.prisma.$transaction(async (tx) => {
+      // 1. Delete the Approval Row
+      await tx.postApproval.delete({ where: { id: approvalId } });
+
+      // 2. Set Post back to DRAFT
+      await tx.post.update({
+        where: { id: approval.postId },
+        data: { status: 'DRAFT' }
+      });
+    });
+  }
+
+    private ensureBulkFeature(user: any) {
     const features =
       user['features'] || user['organization']?.subscription?.plan?.features;
 

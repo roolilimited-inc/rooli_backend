@@ -15,21 +15,21 @@ import {
   Patch,
   Query,
 } from '@nestjs/common';
-import { PostService } from './post.service';
+import { PostService } from '../post.service';
 import { RequireFeature } from '@/common/decorators/require-feature.decorator';
 import { FeatureGuard } from '@/common/guards/feature.guard';
-import { CreatePostDto } from './dto/request/create-post.dto';
+import { CreatePostDto } from '../dto/request/create-post.dto';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { ApiStandardResponse } from '@/common/decorators/api-standard-response.decorator';
 import { ApiOperation, ApiParam, ApiConsumes, ApiBody } from '@nestjs/swagger';
-import { BulkExecuteResponseDto } from './dto/response/bulk-execute.response.dto';
-import { BulkValidateResponseDto } from './dto/response/bulk-validate.dto';
+import { BulkExecuteResponseDto } from '../dto/response/bulk-execute.response.dto';
+import { BulkValidateResponseDto } from '../dto/response/bulk-validate.dto';
 import { CurrentUser } from '@/common/decorators/current-user.decorator';
-import { ExecuteBulkScheduleDto } from './dto/request/execute-bulk-schedule.dto';
-import { UpdatePostDto } from './dto/request/update-post.dto';
-import { PostDto } from './dto/response/post.dto';
+import { ExecuteBulkScheduleDto } from '../dto/request/execute-bulk-schedule.dto';
+import { UpdatePostDto } from '../dto/request/update-post.dto';
+import { PostDto } from '../dto/response/post.dto';
 import { ApiPaginatedResponse } from '@/common/decorators/api-paginated-response.decorator';
-import { GetWorkspacePostsDto } from './dto/request/get-all-posts.dto';
+import { GetWorkspacePostsDto } from '../dto/request/get-all-posts.dto';
 
 @Controller('workspaces/:workspaceId/posts')
 @UseGuards(FeatureGuard)
