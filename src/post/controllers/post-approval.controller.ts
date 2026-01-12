@@ -1,7 +1,7 @@
 import { RequireFeature } from "@/common/decorators/require-feature.decorator";
 import { FeatureGuard } from "@/common/guards/feature.guard";
 import { Controller, UseGuards, Get, Param, Patch, Body, Delete, Req, Query } from "@nestjs/common";
-import { PostService } from "../post.service";
+import { PostService } from "../services/post.service";
 import { ApiPaginatedResponse } from "@/common/decorators/api-paginated-response.decorator";
 import { PaginationDto } from "@/common/dtos/pagination.dto";
 import { PostApprovalDto } from "../dto/response/post-approval.dto";
