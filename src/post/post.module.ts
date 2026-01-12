@@ -1,8 +1,10 @@
-import { Module } from '@nestjs/common';
-import { PostService } from './post.service';
+import { Module, Post } from '@nestjs/common';
+import { PostService } from './services/post.service';
 import { PostController } from './controllers/post.controller';
 import { BullModule } from '@nestjs/bullmq';
 import { PostApprovalController } from './controllers/post-approval.controller';
+import { DestinationBuilder } from './services/destination-builder.service';
+import { PostFactory } from './services/post-factory.service';
 
 @Module({
   imports: [
@@ -11,6 +13,6 @@ import { PostApprovalController } from './controllers/post-approval.controller';
     }),
   ],
   controllers: [PostController, PostApprovalController],
-  providers: [PostService],
+  providers: [PostService, PostFactory, DestinationBuilder],
 })
 export class PostModule {}
