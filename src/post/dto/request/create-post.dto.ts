@@ -11,27 +11,8 @@ import {
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { ContentType } from '@generated/enums';
 import { Type } from 'class-transformer';
-
-export class ThreadItemDto {
-  @ApiProperty({
-    description: 'Text content of the thread item',
-    example: 'This is a comment in the thread',
-  })
-  @IsNotEmpty()
-  @IsString()
-  content: string;
-
-  @ApiPropertyOptional({
-    description:
-      'Optional media IDs attached to this thread item. Order may determine display order.',
-    example: ['media_1', 'media_2'],
-    type: [String],
-  })
-  @IsArray()
-  @IsString({ each: true })
-  @IsOptional()
-  mediaIds?: string[];
-}
+import { PostOverrideDto } from './post-override.dto';
+import { ThreadItemDto } from './thread-item.dto';
 
 export class CreatePostDto {
   @ApiProperty({
@@ -127,8 +108,38 @@ export class CreatePostDto {
   needsApproval?: boolean;
 
   @ApiPropertyOptional({
-    description: 'The chain of replies for this post',
-    type: [ThreadItemDto],
+    type: () => [PostOverrideDto],
+    example: [
+      {
+        socialProfileId: 'profile_twitter_123',
+        content: 'Twitter version with hashtags #dev #nestjs',
+      },
+      {
+        socialProfileId: 'profile_linkedin_456',
+        content: 'LinkedIn version with a professional tone.',
+      },
+    ],
+    description: 'Optional platform-specific content overrides',
+  })
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => PostOverrideDto)
+  @IsOptional()
+  overrides?: PostOverrideDto[];
+
+  @ApiPropertyOptional({
+    type: () => [ThreadItemDto],
+    example: [
+      {
+        content: 'Thread reply #1 with extra insight',
+        mediaIds: ['media_img_1'],
+        targetProfileIds: ['profile_twitter_123'],
+      },
+      {
+        content: 'Thread reply #2 (general)',
+      },
+    ],
+    description: 'Optional thread replies attached to the main post',
   })
   @IsArray()
   @ValidateNested({ each: true })

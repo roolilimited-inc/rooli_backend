@@ -15,7 +15,7 @@ import {
   Patch,
   Query,
 } from '@nestjs/common';
-import { PostService } from '../post.service';
+import { PostService } from '../services/post.service';
 import { RequireFeature } from '@/common/decorators/require-feature.decorator';
 import { FeatureGuard } from '@/common/guards/feature.guard';
 import { CreatePostDto } from '../dto/request/create-post.dto';

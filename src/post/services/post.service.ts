@@ -6,152 +6,99 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { CreatePostDto } from './dto/request/create-post.dto';
+import { CreatePostDto } from '../dto/request/create-post.dto';
 import csv from 'csv-parser';
 import { Readable } from 'stream';
 import {
   BulkCsvRow,
   BulkValidationError,
   PreparedPost,
-} from './interfaces/post.interface';
+} from '../interfaces/post.interface';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
-import { UpdatePostDto } from './dto/request/update-post.dto';
-import { GetWorkspacePostsDto } from './dto/request/get-all-posts.dto';
+import { UpdatePostDto } from '../dto/request/update-post.dto';
+import { GetWorkspacePostsDto } from '../dto/request/get-all-posts.dto';
 import { QueryMode } from '@generated/internal/prismaNamespace';
+import { DestinationBuilder } from './destination-builder.service';
+import { PostFactory } from './post-factory.service';
 
 @Injectable()
 export class PostService {
   constructor(
     private prisma: PrismaService,
     @InjectQueue('media-ingest') private mediaIngestQueue: Queue,
+    private postFactory: PostFactory,
+    private destinationBuilder: DestinationBuilder,
   ) {}
 
-  async createPost(user: User, workspaceId: string, dto: CreatePostDto) {
-    // FEATURE VALIDATION
-    this.validateFeatures(user, dto);
 
-    // PROFILE VALIDATION
-    const validProfiles = await this.prisma.socialProfile.findMany({
-      where: {
-        id: { in: dto.socialProfileIds },
-        workspaceId,
-      },
-      select: { id: true },
+async createPost(user: User, workspaceId: string, dto: CreatePostDto) {
+  this.validateFeatures(user, dto);
+
+  //  Prepare Status
+  const status: PostStatus = dto.needsApproval
+    ? 'PENDING_APPROVAL'
+    : dto.scheduledAt || dto.isAutoSchedule
+    ? 'SCHEDULED'
+    : 'DRAFT';
+
+  //  Prepare Data
+  const profiles = await this.destinationBuilder.validateProfiles(
+    workspaceId,
+    dto.socialProfileIds,
+  );
+  const overrideMap = this.destinationBuilder.buildOverrideMap(dto.overrides);
+
+  return this.prisma.$transaction(async (tx) => {
+    //  Master Post (Factory handles media now)
+    const post = await this.postFactory.createMasterPost(
+      tx,
+      user,
+      workspaceId,
+      dto,
+      status,
+    );
+
+    //  Destinations (Builder handles overrides)
+    await this.destinationBuilder.createDestinations(tx, post.id, profiles, {
+      overrideMap,
     });
 
-    if (validProfiles.length !== dto.socialProfileIds.length) {
-      throw new BadRequestException(
-        'One or more selected profiles do not belong to this workspace.',
-      );
-    }
-
-    // DETERMINE STATUS
-    let status: 'DRAFT' | 'SCHEDULED' | 'PENDING_APPROVAL' = 'DRAFT';
+    //  Approval
     if (dto.needsApproval) {
-      status = 'PENDING_APPROVAL';
-    } else if (dto.scheduledAt || dto.isAutoSchedule) {
-      status = 'SCHEDULED';
+      await tx.postApproval.create({
+        data: { postId: post.id, requesterId: user.id, status: 'PENDING' },
+      });
     }
 
-    //TRANSACTION: MASTER POST + MEDIA + DESTINATIONS + THREADS + APPROVAL
-    return this.prisma.$transaction(async (tx) => {
-      // --- Master Post ---
-      const post = await tx.post.create({
-        data: {
-          workspaceId,
-          authorId: user.id,
-          content: dto.content,
-          contentType: dto.contentType,
-          status,
-          scheduledAt: dto.scheduledAt ? new Date(dto.scheduledAt) : null,
-          isAutoSchedule: dto.isAutoSchedule,
-          timezone: dto.timezone,
-          campaignId: dto.campaignId,
+    // D. Threads (Loop)
+    let previousPostId = post.id;
+    for (const threadItem of dto.threads ?? []) {
+      const threadPost = await this.postFactory.createThreadPost(
+        tx,
+        user,
+        workspaceId,
+        previousPostId,
+        threadItem,
+        status,
+        post.scheduledAt,
+        post.timezone,
+        dto.campaignId,
+      );
 
-          // Labels
-          labels: dto.labelIds
-            ? { connect: dto.labelIds.map((id) => ({ id })) }
-            : undefined,
-        },
-      });
+      await this.destinationBuilder.createDestinations(
+        tx,
+        threadPost.id,
+        profiles,
+        { targetProfileIds: threadItem.targetProfileIds },
+      );
 
-      // --- Media for Master ---
-      if (dto.mediaIds?.length) {
-        await tx.postMedia.createMany({
-          data: dto.mediaIds.map((mediaId, index) => ({
-            postId: post.id,
-            mediaFileId: mediaId,
-            order: index,
-          })),
-        });
-      }
+      previousPostId = threadPost.id;
+    }
 
-      // --- Destinations for Master ---
-      const destinationData = validProfiles.map((profile) => ({
-        postId: post.id,
-        socialProfileId: profile.id,
-        status: PostStatus.SCHEDULED,
-      }));
-      await tx.postDestination.createMany({ data: destinationData });
-
-      // --- Approval Workflow ---
-      if (dto.needsApproval) {
-        await tx.postApproval.create({
-          data: {
-            postId: post.id,
-            requesterId: user.id,
-            status: 'PENDING',
-          },
-        });
-      }
-
-      // --- Threads (if any) ---
-      if (dto.threads?.length) {
-        let previousPostId = post.id;
-
-        for (const threadItem of dto.threads) {
-          const threadPost = await tx.post.create({
-            data: {
-              workspaceId,
-              authorId: user.id,
-              content: threadItem.content,
-              contentType: 'THREAD',
-              status,
-              scheduledAt: post.scheduledAt,
-              timezone: post.timezone,
-              parentPostId: previousPostId,
-              campaignId: dto.campaignId,
-            },
-          });
-
-          // Media for Thread
-          if (threadItem.mediaIds?.length) {
-            await tx.postMedia.createMany({
-              data: threadItem.mediaIds.map((mediaId, index) => ({
-                postId: threadPost.id,
-                mediaFileId: mediaId,
-                order: index,
-              })),
-            });
-          }
-
-          // Destinations for Thread (same as master)
-          const threadDestinations = validProfiles.map((profile) => ({
-            postId: threadPost.id,
-            socialProfileId: profile.id,
-            status: PostStatus.SCHEDULED,
-          }));
-          await tx.postDestination.createMany({ data: threadDestinations });
-
-          previousPostId = threadPost.id; // link next thread
-        }
-      }
-
-      return post;
-    });
-  }
-
+    return post;
+  });
+}
   /**
    * Helper to check Pricing Limits
    */
