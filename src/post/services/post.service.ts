@@ -30,7 +30,6 @@ export class PostService {
     @InjectQueue('media-ingest') private mediaIngestQueue: Queue,
     private postFactory: PostFactory,
     private destinationBuilder: DestinationBuilder,
-    private platformRules: PlatformRulesService,
   ) {}
 
 
@@ -64,7 +63,37 @@ async createPost(user: User, workspaceId: string, dto: CreatePostDto) {
     // B. Save Destinations (Using the pre-calculated payloads)
     await this.destinationBuilder.saveDestinations(tx, post.id, payloads);
 
-    // C. Handle Approval (Don't forget this if you need approvals!)
+    let previousPostId = post.id;
+
+    // We loop through the ARRAY in the DTO
+    for (const threadItem of dto.threads ?? []) {
+      
+      // Call Factory for EACH item
+      const threadPost = await this.postFactory.createThreadPost(
+        tx,
+        user,
+        workspaceId,
+        previousPostId, // Link to previous post in chain
+        threadItem,     // The single item
+        status,
+        post.scheduledAt,
+        post.timezone,
+        dto.campaignId,
+      );
+
+      // Important: Ensure the thread also has destinations!
+      // (Usually threads go to the same places as the master)
+      await this.destinationBuilder.saveDestinations(
+         tx, 
+         threadPost.id, 
+         payloads 
+      );
+
+      // Move the pointer so the next thread attaches to this one
+      previousPostId = threadPost.id;
+    }
+
+    // C. Handle Approval 
     if (dto.needsApproval) {
       await tx.postApproval.create({
         data: { 
