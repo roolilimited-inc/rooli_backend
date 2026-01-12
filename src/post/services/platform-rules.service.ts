@@ -2,153 +2,134 @@ import { Platform } from '@generated/enums';
 import { Injectable, BadRequestException } from '@nestjs/common';
 import * as twitter from 'twitter-text';
 
+
+export interface ValidationResult {
+  isValid: boolean;
+  finalContent: string;        // The content for the main post
+  threadChain?: string[];      // Extra parts (for Twitter auto-threading)
+}
 @Injectable()
 export class PlatformRulesService {
-  private readonly X_CHAR_LIMIT = 280; 
+  private readonly X_CHAR_LIMIT = 280;
   private readonly X_MAX_MEDIA = 4;
   private readonly LINKEDIN_CHAR_LIMIT = 3000;
   private readonly IG_CAPTION_LIMIT = 2200;
   private readonly IG_HASHTAG_LIMIT = 30;
 
-  public validatePost(
+ public validateAndTransform(
     content: string,
-    platform: Platform,
-    media?: { url: string; width?: number; height?: number }[],
-  ) {
+    platform: string, // Use string or Enum
+    media: any[] = []
+  ): ValidationResult {
     switch (platform) {
-      // ✅ Pass media to X validation
-      case Platform.TWITTER: return this.validateX(content, media);
-      case Platform.INSTAGRAM: return this.validateInstagram(content, media);
-      case Platform.FACEBOOK: return this.validateFacebook(content, media);
-      case Platform.LINKEDIN: return this.validateLinkedIn(content, media);
-      default: return [{ content }];
+      case 'TWITTER': return this.processTwitter(content, media);
+      case 'LINKEDIN': return this.processLinkedIn(content, media);
+      case 'FACEBOOK': return this.processFacebook(content, media);
+      case 'INSTAGRAM': return this.processInstagram(content, media);
+      default: return { isValid: true, finalContent: content };
     }
   }
 
+ private processTwitter(content: string, media: any[]): ValidationResult {
+    if (media.length > 4) throw new BadRequestException('Twitter max 4 images.');
 
-private validateX(content: string, media?: any[]): { content: string }[] {
-    // 1. MEDIA VALIDATION
-    // Twitter allows max 4 photos, OR 1 video, OR 1 GIF.
-    // For simplicity, we enforce the count of 4 items max.
-    if (media && media.length > this.X_MAX_MEDIA) {
-      throw new BadRequestException(`Twitter allows a maximum of ${this.X_MAX_MEDIA} images per tweet.`);
-    }
-
-    // 2. CHECK IF CONTENT IS VALID
-    // This handles URLs (23 chars), Chinese/Japanese characters (weighted), and Emojis correctly.
-    const parseResult = twitter.parseTweet(content);
-
-    // If it fits in one tweet, return it immediately.
-    if (parseResult.valid) {
-      return [{ content }];
-    }
-
-    // 3. SMART THREAD SPLITTER
-    // If too long, we split it safely using the library to verify each chunk.
-    const threads: string[] = [];
-    const words = content.split(/\s+/); // Split by whitespace (preserve paragraphs if you use split('\n') first)
+    const parse = twitter.parseTweet(content);
     
-    let currentBuffer = "";
+    // Case A: Fits in one tweet
+    if (parse.valid) {
+      return { isValid: true, finalContent: content };
+    }
+
+    // Case B: Needs Splitting (Simple logic)
+    // NOTE: In production, use a sentence splitter library
+    const chunks: string[] = [];
+    const words = content.split(' ');
+    let buffer = '';
 
     for (const word of words) {
-      // Try adding the next word
-      const candidate = currentBuffer ? `${currentBuffer} ${word}` : word;
-
-      // Ask Twitter: "Is this candidate string still valid?"
+      const candidate = buffer ? `${buffer} ${word}` : word;
       if (twitter.parseTweet(candidate).valid) {
-        // Yes, it fits. Keep building.
-        currentBuffer = candidate;
+        buffer = candidate;
       } else {
-        // No, it's too long. Push the previous buffer to threads.
-        if (currentBuffer) threads.push(currentBuffer);
-        
-        // Start a new thread with the current word
-        // Edge Case: If a SINGLE word is longer than 280 chars (unlikely), this will still fail API, 
-        // but that's a user error.
-        currentBuffer = word;
+        chunks.push(buffer);
+        buffer = word;
       }
     }
+    if (buffer) chunks.push(buffer);
 
-    // Push the final leftover chunk
-    if (currentBuffer) threads.push(currentBuffer);
+    // Numbering (1/3)
+    const total = chunks.length;
+    const finalChunks = chunks.map((c, i) => `${c} (${i + 1}/${total})`);
 
-    // 4. ADD NUMBERING (1/X)
-    // Note: Adding " (1/5)" adds characters! We need to be careful.
-    // The simplified splitter above might overflow if we add numbering *after* splitting.
-    // A robust production splitter reserves 7 chars of space for numbering.
-    
-    // For this implementation, we return the clean threads. 
-    // Most users prefer seeing the splits clearly in the UI first.
-    return threads.map((text, index) => ({
-      content: `${text} (${index + 1}/${threads.length})` 
-    }));
+    return {
+      isValid: true,
+      finalContent: finalChunks[0],      // First Tweet
+      threadChain: finalChunks.slice(1), // Remaining Tweets
+    };
   }
 
-  private validateInstagram(
+  private processInstagram(
     content: string,
-    media?: { url: string; width?: number; height?: number }[],
+    media: { width?: number; height?: number }[],
   ) {
-    // 1. TEXT LIMITS (Added)
+    // 1. Content Limits
     if (content.length > this.IG_CAPTION_LIMIT) {
-       throw new BadRequestException(`Instagram captions cannot exceed ${this.IG_CAPTION_LIMIT} characters.`);
+      throw new Error(`Caption exceeds ${this.IG_CAPTION_LIMIT} characters.`);
     }
 
-    // 2. HASHTAG LIMIT (Added)
-    // Count occurrences of '#'
-    const hashtagCount = (content.match(/#/g) || []).length;
+    // 2. Efficient Hashtag Counting
+    // Matches # followed by alphanumeric chars.
+    const hashtagCount = (content.match(/#[a-z0-9_]+/gi) || []).length;
     if (hashtagCount > this.IG_HASHTAG_LIMIT) {
-       throw new BadRequestException(`Instagram allows max ${this.IG_HASHTAG_LIMIT} hashtags.`);
+      throw new Error(`Max ${this.IG_HASHTAG_LIMIT} hashtags allowed.`);
     }
 
-    // 3. MEDIA PRESENCE
-    if (!media || media.length === 0) {
-      throw new BadRequestException('Instagram posts require at least 1 image/video.');
+    // 3. Media Requirements
+    if (media.length === 0) {
+      throw new Error('Instagram requires at least 1 image or video.');
     }
-    if (media.length > 10) throw new BadRequestException('Instagram Carousel: Max 10 items.');
+    if (media.length > 10) {
+      throw new Error('Instagram Carousel allows max 10 items.');
+    }
 
-    // 4. RATIO CHECK
+    // 4. Aspect Ratio Check (Floating Point Safe)
     for (const m of media) {
-      if (!m.width || !m.height) continue; 
+      if (!m.width || !m.height) continue; // Skip if metadata missing
 
       const ratio = m.width / m.height;
-      const validRatios = [
-        { min: 0.99, max: 1.01, name: 'Square (1:1)' },
-        { min: 0.8, max: 0.85, name: 'Portrait (4:5)' },
-        { min: 1.9, max: 1.92, name: 'Landscape (1.91:1)' },
-        { min: 0.56, max: 0.57, name: 'Reel (9:16)' },
-      ];
 
-      const isValid = validRatios.some(r => ratio >= r.min && ratio <= r.max);
-      
-      if (!isValid) {
-        // Warning: This is strict. You might want to just "warn" instead of "throw".
-         throw new BadRequestException(
-          `Image ratio ${ratio.toFixed(2)} is invalid for Instagram. Allowed: 1:1, 4:5, 1.91:1, or 9:16`
+      // Instagram Ratios: Square (1:1), Portrait (4:5 -> 0.8), Landscape (1.91:1), Reel (9:16 -> 0.5625)
+      // Allow a small epsilon for rounding errors
+      const isSquare = Math.abs(ratio - 1) < 0.02;
+      const isPortrait = Math.abs(ratio - 0.8) < 0.02;
+      const isLandscape = Math.abs(ratio - 1.91) < 0.02;
+      const isReel = Math.abs(ratio - 9 / 16) < 0.02;
+
+      if (!isSquare && !isPortrait && !isLandscape && !isReel) {
+        throw new Error(
+          `Invalid aspect ratio (${ratio.toFixed(2)}). Supported: 1:1, 4:5, 1.91:1, 9:16`,
         );
       }
     }
-    return [{ content }];
+    return { isValid: true, finalContent: content };
   }
 
-  private validateFacebook(content: string, media?: any[]) {
-    if (media && media.length > 10) {
-      throw new BadRequestException('Facebook allows max 10 photos/videos per post.');
+  private processFacebook(content: string, media: any[]) {
+    if (media.length > 10) {
+      throw new Error('Facebook allows max 10 photos/videos per post.');
     }
-    // Facebook text limit is ~63k characters, so we practically ignore it.
-    return [{ content }];
+    return { isValid: true, finalContent: content };
   }
 
-  private validateLinkedIn(content: string, media?: any[]) {
+  private processLinkedIn(content: string, media: any[]) {
     if (content.length > this.LINKEDIN_CHAR_LIMIT) {
-      throw new BadRequestException(
-        `LinkedIn text is too long (${content.length}/${this.LINKEDIN_CHAR_LIMIT}).`
+      throw new Error(
+        `Text exceeds LinkedIn limit (${content.length}/${this.LINKEDIN_CHAR_LIMIT}).`,
       );
     }
-    // LinkedIn supports 9 images (grid) or multi-page PDF (carousel). 
-    // 9 is a safe generic limit to enforce for images.
-    if (media && media.length > 9) {
-       throw new BadRequestException('LinkedIn recommends max 9 images for optimal display.');
+    if (media.length > 9) {
+      throw new Error('LinkedIn recommends max 9 images.');
     }
-    return [{ content }];
+    return { isValid: true, finalContent: content };
   }
 }

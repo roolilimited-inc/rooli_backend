@@ -6,7 +6,6 @@ import { ThreadItemDto } from "../dto/request/thread-item.dto";
 
 @Injectable()
 export class PostFactory {
-  // 1. MASTER POST
   async createMasterPost(
     tx: Prisma.TransactionClient,
     user: User,
@@ -22,16 +21,15 @@ export class PostFactory {
         contentType: dto.contentType,
         status,
         scheduledAt: dto.scheduledAt ? new Date(dto.scheduledAt) : null,
-        isAutoSchedule: dto.isAutoSchedule,
+        isAutoSchedule: dto.isAutoSchedule ?? false,
         timezone: dto.timezone,
         campaignId: dto.campaignId,
-        labels: dto.labelIds
+        labels: dto.labelIds?.length
           ? { connect: dto.labelIds.map((id) => ({ id })) }
           : undefined,
       },
     });
 
-    // Move Media Logic Inside
     if (dto.mediaIds?.length) {
       await this.createPostMedia(tx, post.id, dto.mediaIds);
     }
@@ -39,7 +37,6 @@ export class PostFactory {
     return post;
   }
 
-  // 2. THREAD POST
   async createThreadPost(
     tx: Prisma.TransactionClient,
     user: User,
@@ -48,7 +45,7 @@ export class PostFactory {
     threadItem: ThreadItemDto,
     status: PostStatus,
     rootScheduledAt: Date | null,
-    rootTimezone: string,
+    rootTimezone: string | null, // Allow null
     campaignId?: string,
   ) {
     const post = await tx.post.create({
@@ -65,7 +62,6 @@ export class PostFactory {
       },
     });
 
-    // Reuse Media Logic
     if (threadItem.mediaIds?.length) {
       await this.createPostMedia(tx, post.id, threadItem.mediaIds);
     }
@@ -73,18 +69,18 @@ export class PostFactory {
     return post;
   }
 
-  // 3. PRIVATE HELPER (Don't Repeat Yourself)
   private async createPostMedia(
     tx: Prisma.TransactionClient,
     postId: string,
     mediaIds: string[],
   ) {
-    await tx.postMedia.createMany({
-      data: mediaIds.map((mediaId, index) => ({
-        postId,
-        mediaFileId: mediaId,
-        order: index,
-      })),
-    });
+    // Prepare data for createMany
+    const data = mediaIds.map((mediaFileId, index) => ({
+      postId,
+      mediaFileId,
+      order: index,
+    }));
+
+    await tx.postMedia.createMany({ data });
   }
 }

@@ -21,6 +21,7 @@ import { GetWorkspacePostsDto } from '../dto/request/get-all-posts.dto';
 import { QueryMode } from '@generated/internal/prismaNamespace';
 import { DestinationBuilder } from './destination-builder.service';
 import { PostFactory } from './post-factory.service';
+import { PlatformRulesService } from './platform-rules.service';
 
 @Injectable()
 export class PostService {
@@ -29,71 +30,49 @@ export class PostService {
     @InjectQueue('media-ingest') private mediaIngestQueue: Queue,
     private postFactory: PostFactory,
     private destinationBuilder: DestinationBuilder,
+    private platformRules: PlatformRulesService,
   ) {}
 
 
 async createPost(user: User, workspaceId: string, dto: CreatePostDto) {
+  // 1. Basic Validation (Fail fast)
   this.validateFeatures(user, dto);
 
-  //  Prepare Status
+  // 2. Heavy Lifting (Validation & Transformation)
+  // This runs OUTSIDE the transaction. If it fails (e.g., Twitter too long), 
+  // we haven't touched the DB yet.
+  const payloads = await this.destinationBuilder.preparePayloads(workspaceId, dto);
+
+  // 3. Prepare Status
   const status: PostStatus = dto.needsApproval
     ? 'PENDING_APPROVAL'
     : dto.scheduledAt || dto.isAutoSchedule
     ? 'SCHEDULED'
     : 'DRAFT';
 
-  //  Prepare Data
-  const profiles = await this.destinationBuilder.validateProfiles(
-    workspaceId,
-    dto.socialProfileIds,
-  );
-  const overrideMap = this.destinationBuilder.buildOverrideMap(dto.overrides);
-
+  // 4. Database Transaction (Fast & Safe)
   return this.prisma.$transaction(async (tx) => {
-    //  Master Post (Factory handles media now)
+    // A. Create Master Post (Once!)
     const post = await this.postFactory.createMasterPost(
       tx,
       user,
       workspaceId,
       dto,
-      status,
+      status, // Use the calculated status, not hardcoded 'SCHEDULED'
     );
 
-    //  Destinations (Builder handles overrides)
-    await this.destinationBuilder.createDestinations(tx, post.id, profiles, {
-      overrideMap,
-    });
+    // B. Save Destinations (Using the pre-calculated payloads)
+    await this.destinationBuilder.saveDestinations(tx, post.id, payloads);
 
-    //  Approval
+    // C. Handle Approval (Don't forget this if you need approvals!)
     if (dto.needsApproval) {
       await tx.postApproval.create({
-        data: { postId: post.id, requesterId: user.id, status: 'PENDING' },
+        data: { 
+          postId: post.id, 
+          requesterId: user.id, 
+          status: 'PENDING' 
+        },
       });
-    }
-
-    // D. Threads (Loop)
-    let previousPostId = post.id;
-    for (const threadItem of dto.threads ?? []) {
-      const threadPost = await this.postFactory.createThreadPost(
-        tx,
-        user,
-        workspaceId,
-        previousPostId,
-        threadItem,
-        status,
-        post.scheduledAt,
-        post.timezone,
-        dto.campaignId,
-      );
-
-      await this.destinationBuilder.createDestinations(
-        tx,
-        threadPost.id,
-        profiles,
-        { targetProfileIds: threadItem.targetProfileIds },
-      );
-
-      previousPostId = threadPost.id;
     }
 
     return post;

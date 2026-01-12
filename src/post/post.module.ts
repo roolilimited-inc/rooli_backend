@@ -5,6 +5,7 @@ import { BullModule } from '@nestjs/bullmq';
 import { PostApprovalController } from './controllers/post-approval.controller';
 import { DestinationBuilder } from './services/destination-builder.service';
 import { PostFactory } from './services/post-factory.service';
+import { PlatformRulesService } from './services/platform-rules.service';
 
 @Module({
   imports: [
@@ -13,6 +14,6 @@ import { PostFactory } from './services/post-factory.service';
     }),
   ],
   controllers: [PostController, PostApprovalController],
-  providers: [PostService, PostFactory, DestinationBuilder],
+  providers: [PostService, PostFactory, DestinationBuilder, PlatformRulesService,],
 })
 export class PostModule {}
