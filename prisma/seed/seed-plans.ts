@@ -163,6 +163,7 @@ export async function seedPlans() {
         hasLabels: true,
         mediaLibrary: true,
         bulkScheduling: true,
+        queueScheduling: true,
       },
 
       isActive: true,
@@ -197,6 +198,7 @@ export async function seedPlans() {
         hasLabels: true,
        mediaLibrary: true,
         bulkScheduling: true,
+        queueScheduling: true,
       },
 
       isActive: true,
@@ -243,6 +245,7 @@ export async function seedPlans() {
         hasLabels: true,
         mediaLibrary: true,
         bulkScheduling: true,
+        queueScheduling: true,
       },
       
       // HIDDEN FROM PUBLIC UI
