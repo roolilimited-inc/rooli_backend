@@ -46,6 +46,7 @@ import { MetaWebhooksModule } from './meta-webhooks/meta-webhooks.module';
 import { PostModule } from './post/post.module';
 import { PostMediaModule } from './post-media/post-media.module';
 import { WorkerModule } from './worker/worker.module';
+import { SchedulerModule } from './scheduler/scheduler.module';
 
 @Module({
   imports: [
@@ -126,6 +127,8 @@ import { WorkerModule } from './worker/worker.module';
     PostMediaModule,
 
     WorkerModule,
+
+    SchedulerModule,
   ],
   controllers: [AppController],
   providers: [

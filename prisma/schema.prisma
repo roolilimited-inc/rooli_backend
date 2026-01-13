@@ -508,13 +508,12 @@ model QueueSlot {
   // "Every Monday"
   dayOfWeek   DayOfWeek // Enum: MONDAY, TUESDAY...
   time        String    // "09:00" (24h format)
-  timezone    String    // "Africa/Lagos"
   
   isActive    Boolean   @default(true)
 
   workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
 
-  @@index([workspaceId, dayOfWeek])
+  @@index([workspaceId])
 }
 
 // ==========================================
