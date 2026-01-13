@@ -4,6 +4,9 @@ import { WorkerController } from './worker.controller';
 import { BullModule } from '@nestjs/bullmq';
 import { PostMediaModule } from '@/post-media/post-media.module';
 import { MediaIngestProcessor } from './processors/media-ingest.processor';
+import { PublishingProcessor } from './processors/publishing.processor';
+import { PublishingScheduler } from './schedulers/publishing.scheduler';
+import { SocialModule } from '@/social/social.module';
 
 @Module({
   imports: [
@@ -39,9 +42,14 @@ import { MediaIngestProcessor } from './processors/media-ingest.processor';
         BullModule.registerQueue({
       name: 'media-ingest', 
     }),
+    BullModule.registerQueue({
+      name: 'publishing-queue', 
+    }),
     PostMediaModule,
+    SocialModule
   ],
   controllers: [WorkerController],
-  providers: [WorkerService, MediaIngestProcessor],
+  providers: [WorkerService, MediaIngestProcessor, PublishingScheduler, 
+    PublishingProcessor,],
 })
 export class WorkerModule {}

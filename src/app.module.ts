@@ -47,10 +47,12 @@ import { PostModule } from './post/post.module';
 import { PostMediaModule } from './post-media/post-media.module';
 import { WorkerModule } from './worker/worker.module';
 import { QueueModule } from './queue/queue.module';
+import { ScheduleModule } from '@nestjs/schedule';
+import { SocialModule } from './social/social.module';
 
 @Module({
   imports: [
-
+    ScheduleModule.forRoot(),
     ConfigModule.forRoot({
       isGlobal: true,
     }),
@@ -129,6 +131,8 @@ import { QueueModule } from './queue/queue.module';
     WorkerModule,
 
     QueueModule,
+
+    SocialModule,
   ],
   controllers: [AppController],
   providers: [
