@@ -118,7 +118,8 @@ export class PostMediaService {
     });
 
     // B. Delete from DB
-    return this.prisma.mediaFile.delete({ where: { id: fileId } });
+   await this.prisma.mediaFile.delete({ where: { id: fileId } });
+   return;
   }
 
   // ------------------------------------------

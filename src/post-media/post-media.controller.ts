@@ -145,15 +145,23 @@ export class PostMediaController {
   @ApiOperation({ summary: 'Delete a file from the media library' })
   @ApiParam({ name: 'workspaceId', description: 'Workspace ID' })
   @ApiParam({ name: 'fileId', description: 'ID of the file to delete' })
-  @ApiStandardResponse(MediaFileDto)
+  @ApiOkResponse({
+    schema: {
+      example: {
+        success: true,
+        data: null,
+        message: 'File deleted successfully',
+      },
+    },
+  })
   async deleteFile(
     @Param('workspaceId') wsId: string,
     @Param('fileId') fileId: string,
   ) {
-    const deleted = await this.mediaService.deleteFile(wsId, fileId);
+     await this.mediaService.deleteFile(wsId, fileId);
     return {
       success: true,
-      data: deleted,
+      data: null,
       message: 'File deleted successfully',
     };
   }
