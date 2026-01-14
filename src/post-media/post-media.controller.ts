@@ -28,6 +28,7 @@ import {
   ApiConsumes,
   ApiQuery,
   ApiOkResponse,
+  ApiBearerAuth,
 } from '@nestjs/swagger';
 import { ApiStandardListResponse } from '@/common/decorators/api-standard-list-response.decorator';
 import { ApiStandardResponse } from '@/common/decorators/api-standard-response.decorator';
@@ -37,6 +38,7 @@ import { MediaLibraryResponseDto } from './dto/response/media-library.dto';
 
 @ApiTags('Media Library')
 @Controller('workspaces/:workspaceId/media')
+ @ApiBearerAuth()
 @UseGuards(FeatureGuard)
 export class PostMediaController {
   constructor(private readonly mediaService: PostMediaService) {}
@@ -71,7 +73,7 @@ export class PostMediaController {
     )
     file: Express.Multer.File,
   ) {
-    return this.mediaService.uploadFile(req.user, wsId, file, folderId);
+    return this.mediaService.uploadFile(req.user.userId, wsId, file, folderId);
   }
 
   @Post('upload/multiple')
@@ -119,7 +121,7 @@ export class PostMediaController {
       throw new BadRequestException('No files provided');
     }
 
-    return this.mediaService.uploadMany(req.user, wsId, files, folderId);
+    return this.mediaService.uploadMany(req.user.userId, wsId, files, folderId);
   }
 
   @Get('library')

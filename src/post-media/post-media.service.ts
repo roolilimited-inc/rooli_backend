@@ -1,8 +1,8 @@
 import { PrismaService } from '@/prisma/prisma.service';
 import { User } from '@generated/client';
 import { BadRequestException, Injectable } from '@nestjs/common';
-import { v2 as cloudinary } from 'cloudinary';
 import * as streamifier from 'streamifier';
+import { v2 as cloudinary } from 'cloudinary';
 
 @Injectable()
 export class PostMediaService {
@@ -11,7 +11,7 @@ export class PostMediaService {
   // ==========================================
   // 1. UPLOAD FILE (Buffer -> Cloudinary -> DB)
   // ==========================================
-  async uploadFile(user: User, workspaceId: string, file: Express.Multer.File, folderId?: string) {
+  async uploadFile(userId: string , workspaceId: string, file: Express.Multer.File, folderId?: string) {
     // A. Validate Folder (if provided)
     if (folderId) {
       const folder = await this.prisma.mediaFolder.findFirst({
@@ -27,7 +27,7 @@ export class PostMediaService {
     const mediaFile = await this.prisma.mediaFile.create({
       data: {
         workspaceId,
-        userId: user.id,
+        userId: userId,
         folderId: folderId || null,
         
         filename: file.originalname,
@@ -54,7 +54,7 @@ export class PostMediaService {
     };
   }
 
-  async uploadMany(user: User, workspaceId: string, files: Array<Express.Multer.File>, folderId?: string) {
+  async uploadMany(userId: string,workspaceId: string, files: Array<Express.Multer.File>, folderId?: string) {
     // 1. Validate Folder Once (Optimization)
     if (folderId) {
       const folder = await this.prisma.mediaFolder.findFirst({
@@ -63,7 +63,7 @@ export class PostMediaService {
       if (!folder) throw new BadRequestException('Folder not found');
     }
     
-    const uploadPromises = files.map(file => this.uploadFile(user, workspaceId, file, folderId));
+    const uploadPromises = files.map(file => this.uploadFile(userId, workspaceId, file, folderId));
 
     const results = await Promise.all(uploadPromises);
 
