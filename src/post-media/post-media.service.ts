@@ -1,5 +1,4 @@
 import { PrismaService } from '@/prisma/prisma.service';
-import { User } from '@generated/client';
 import { BadRequestException, Injectable } from '@nestjs/common';
 import * as streamifier from 'streamifier';
 import { v2 as cloudinary } from 'cloudinary';

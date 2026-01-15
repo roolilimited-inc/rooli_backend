@@ -8,7 +8,7 @@ import { ThreadItemDto } from "../dto/request/thread-item.dto";
 export class PostFactory {
   async createMasterPost(
     tx: Prisma.TransactionClient,
-    user: User,
+    userId: string,
     workspaceId: string,
     dto: CreatePostDto,
     status: PostStatus,
@@ -16,7 +16,7 @@ export class PostFactory {
     const post = await tx.post.create({
       data: {
         workspaceId,
-        authorId: user.id,
+        authorId: userId,
         content: dto.content,
         contentType: dto.contentType,
         status,

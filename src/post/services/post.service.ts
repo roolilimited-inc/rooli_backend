@@ -35,7 +35,7 @@ export class PostService {
   ) {}
 
 
-async createPost(user: User, workspaceId: string, dto: CreatePostDto) {
+async createPost(user: any, workspaceId: string, dto: CreatePostDto) {
   // 1. Basic Validation (Fail fast)
   this.validateFeatures(user, dto);
 
@@ -48,9 +48,6 @@ async createPost(user: User, workspaceId: string, dto: CreatePostDto) {
     if (dto.isAutoSchedule) {
       // 1. Calculate the magic date
       finalScheduledAt = await this.queueService.getNextAvailableSlot(workspaceId);
-      
-      // 2. IMPORTANT: Update the DTO or use a variable
-      // (The logic below uses 'status', so we need to ensure status becomes SCHEDULED)
     }
 
   // 2. Heavy Lifting (Validation & Transformation)
@@ -70,7 +67,7 @@ async createPost(user: User, workspaceId: string, dto: CreatePostDto) {
     // A. Create Master Post (Once!)
     const post = await this.postFactory.createMasterPost(
       tx,
-      user,
+      user.userId,
       workspaceId,
       { ...dto, scheduledAt: finalScheduledAt?.toISOString() },
       status, // Use the calculated status, not hardcoded 'SCHEDULED'
