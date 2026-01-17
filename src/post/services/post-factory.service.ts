@@ -39,7 +39,7 @@ export class PostFactory {
 
   async createThreadPost(
     tx: Prisma.TransactionClient,
-    user: User,
+    userId: string,
     workspaceId: string,
     parentPostId: string,
     threadItem: ThreadItemDto,
@@ -51,7 +51,7 @@ export class PostFactory {
     const post = await tx.post.create({
       data: {
         workspaceId,
-        authorId: user.id,
+        authorId: userId,
         content: threadItem.content,
         contentType: 'THREAD',
         status,

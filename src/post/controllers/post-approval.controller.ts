@@ -7,8 +7,10 @@ import { PaginationDto } from "@/common/dtos/pagination.dto";
 import { PostApprovalDto } from "../dto/response/post-approval.dto";
 import { ReviewApprovalDto } from "../dto/response/review-approval.dto";
 import { ApiStandardResponse } from "@/common/decorators/api-standard-response.decorator";
+import { ApiBearerAuth } from "@nestjs/swagger";
 
 @Controller('workspaces/:workspaceId/approvals')
+@ApiBearerAuth()
 @UseGuards(FeatureGuard)
 @RequireFeature('approvalWorkflow') 
 export class PostApprovalController {

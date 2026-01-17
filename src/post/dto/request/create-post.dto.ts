@@ -57,7 +57,7 @@ export class CreatePostDto {
   @ApiPropertyOptional({
     description:
       'ISO 8601 datetime string for when the post should be published',
-    example: '2026-01-10T09:00:00.000Z',
+    example: '2026-01-10T09:00:00.000',
   })
   @IsOptional()
   @IsDateString()

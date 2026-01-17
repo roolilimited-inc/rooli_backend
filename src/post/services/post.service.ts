@@ -21,8 +21,10 @@ import { GetWorkspacePostsDto } from '../dto/request/get-all-posts.dto';
 import { QueryMode } from '@generated/internal/prismaNamespace';
 import { DestinationBuilder } from './destination-builder.service';
 import { PostFactory } from './post-factory.service';
-import { PlatformRulesService } from './platform-rules.service';
 import { QueueService } from '@/queue/queue.service';
+import { isBefore, subMinutes } from 'date-fns';
+import { fromZonedTime } from 'date-fns-tz';
+import { BulkCreatePostDto } from '../dto/request/bulk-schedule.dto';
 
 @Injectable()
 export class PostService {
@@ -34,92 +36,133 @@ export class PostService {
     private queueService: QueueService,
   ) {}
 
+  async createPost(user: any, workspaceId: string, dto: CreatePostDto) {
+    // 1. Basic Validation (Fail fast)
+    this.validateFeatures(user, dto);
 
-async createPost(user: any, workspaceId: string, dto: CreatePostDto) {
-  // 1. Basic Validation (Fail fast)
-  this.validateFeatures(user, dto);
+    // ---------------------------------------------------------
+    // TIMEZONE CONVERSION
+    // ---------------------------------------------------------
+    let finalScheduledAt: Date | null = null;
 
-  // ---------------------------------------------------------
-  // 🕰️ HANDLE AUTO-SCHEDULE
-  // ---------------------------------------------------------
-
-  let finalScheduledAt: Date | null = dto.scheduledAt ? new Date(dto.scheduledAt) : null;
-
-    if (dto.isAutoSchedule) {
-      // 1. Calculate the magic date
-      finalScheduledAt = await this.queueService.getNextAvailableSlot(workspaceId);
+    if (dto.scheduledAt) {
+      // A. Check if user sent a Timezone AND a non-UTC string (no 'Z' at end)
+      if (dto.timezone && !dto.scheduledAt.endsWith('Z')) {
+        try {
+          // Convert "12:30 Lagos" -> "11:30 UTC" Date Object
+          finalScheduledAt = fromZonedTime(dto.scheduledAt, dto.timezone);
+        } catch (error) {
+          throw new BadRequestException('Invalid timezone or date format.');
+        }
+      } else {
+        // B. Fallback: User sent UTC (ends in Z) or didn't send timezone
+        finalScheduledAt = new Date(dto.scheduledAt);
+      }
     }
 
-  // 2. Heavy Lifting (Validation & Transformation)
-  // This runs OUTSIDE the transaction. If it fails (e.g., Twitter too long), 
-  // we haven't touched the DB yet.
-  const payloads = await this.destinationBuilder.preparePayloads(workspaceId, dto);
+    // ---------------------------------------------------------
+    // 🕰️ HANDLE AUTO-SCHEDULE (Overwrites manual time)
+    // ---------------------------------------------------------
+    if (dto.isAutoSchedule) {
+      finalScheduledAt =
+        await this.queueService.getNextAvailableSlot(workspaceId);
+    }
 
- // 3. Prepare Status (Updated Logic)
-    const status: PostStatus = dto.needsApproval
-      ? 'PENDING_APPROVAL'
-      : (finalScheduledAt) // Check our calculated variable
-      ? 'SCHEDULED'
-      : 'DRAFT';
+    // ---------------------------------------------------------
+    // 🛑 DATE VALIDATION (Must be checked AFTER conversion)
+    // ---------------------------------------------------------
+    if (finalScheduledAt) {
+      const now = new Date();
+      const fiveMinutesAgo = subMinutes(now, 5);
 
-  // 4. Database Transaction (Fast & Safe)
-  return this.prisma.$transaction(async (tx) => {
-    // A. Create Master Post (Once!)
-    const post = await this.postFactory.createMasterPost(
-      tx,
-      user.userId,
+      // We compare the final UTC Date object against "Now" (UTC)
+      if (isBefore(finalScheduledAt, fiveMinutesAgo)) {
+        // Tip: Provide a helpful error message showing what the server saw
+        throw new BadRequestException(
+          `Scheduled time is in the past. (Server calculated: ${finalScheduledAt.toISOString()})`,
+        );
+      }
+    }
+    // 2. Heavy Lifting (Validation & Transformation)
+    // This runs OUTSIDE the transaction. If it fails (e.g., Twitter too long),
+    // we haven't touched the DB yet.
+    const payloads = await this.destinationBuilder.preparePayloads(
       workspaceId,
-      { ...dto, scheduledAt: finalScheduledAt?.toISOString() },
-      status, // Use the calculated status, not hardcoded 'SCHEDULED'
+      dto,
     );
 
-    // B. Save Destinations (Using the pre-calculated payloads)
-    await this.destinationBuilder.saveDestinations(tx, post.id, payloads);
+    // 3. Prepare Status (Updated Logic)
+    const status: PostStatus = dto.needsApproval
+      ? 'PENDING_APPROVAL'
+      : finalScheduledAt // Check our calculated variable
+        ? 'SCHEDULED'
+        : 'DRAFT';
 
-    let previousPostId = post.id;
-
-    // We loop through the ARRAY in the DTO
-    for (const threadItem of dto.threads ?? []) {
-      
-      // Call Factory for EACH item
-      const threadPost = await this.postFactory.createThreadPost(
+    // 4. Database Transaction (Fast & Safe)
+    return this.prisma.$transaction(async (tx) => {
+      // A. Create Master Post
+      const post = await this.postFactory.createMasterPost(
         tx,
-        user,
+        user.userId,
         workspaceId,
-        previousPostId, // Link to previous post in chain
-        threadItem,     // The single item
-        status,
-        post.scheduledAt,
-        post.timezone,
-        dto.campaignId,
+        { ...dto, scheduledAt: finalScheduledAt?.toISOString() },
+        status, // Use the calculated status, not hardcoded 'SCHEDULED'
       );
 
-      // Important: Ensure the thread also has destinations!
-      // (Usually threads go to the same places as the master)
-      await this.destinationBuilder.saveDestinations(
-         tx, 
-         threadPost.id, 
-         payloads 
-      );
+      // B. Save Destinations (Using the pre-calculated payloads)
+      await this.destinationBuilder.saveDestinations(tx, post.id, payloads);
 
-      // Move the pointer so the next thread attaches to this one
-      previousPostId = threadPost.id;
-    }
+      // =========================================================
+      // 🧵 THREAD HANDLING (Strictly Twitter Only)
+      // =========================================================
 
-    // C. Handle Approval 
-    if (dto.needsApproval) {
-      await tx.postApproval.create({
-        data: { 
-          postId: post.id, 
-          requesterId: user.id, 
-          status: 'PENDING' 
-        },
-      });
-    }
+      // 1. Filter payloads to find ONLY Twitter profiles
+      const twitterPayloads = payloads.filter((p) => p.platform === 'TWITTER');
 
-    return post;
-  });
-}
+      // Only run this if we actually have Twitter profiles AND threads
+      if (twitterPayloads.length > 0 && dto.threads?.length > 0) {
+        let previousPostId = post.id;
+
+        for (const threadItem of dto.threads) {
+          // 2. Create the Thread Post
+          const threadPost = await this.postFactory.createThreadPost(
+            tx,
+            user.userId,
+            workspaceId,
+            previousPostId, // Link to previous tweet
+            threadItem,
+            status,
+            post.scheduledAt,
+            post.timezone,
+            dto.campaignId,
+          );
+
+          // 3. Save Destinations (Twitter Only)
+          await this.destinationBuilder.saveDestinations(
+            tx,
+            threadPost.id,
+            twitterPayloads, // Critical: Use the filtered list
+          );
+
+          // Move the pointer so the next thread attaches to this one
+          previousPostId = threadPost.id;
+        }
+      }
+
+      // C. Handle Approval
+      if (dto.needsApproval) {
+        await tx.postApproval.create({
+          data: {
+            postId: post.id,
+            requesterId: user.id,
+            status: 'PENDING',
+          },
+        });
+      }
+
+      return post;
+    });
+  }
   /**
    * Helper to check Pricing Limits
    */
@@ -143,438 +186,479 @@ async createPost(user: any, workspaceId: string, dto: CreatePostDto) {
     }
   }
 
-async getWorkspacePosts(
-  workspaceId: string,
-  dto: GetWorkspacePostsDto,
-) {
-  const { page, limit, status, contentType, search } = dto;
+  async getWorkspacePosts(workspaceId: string, dto: GetWorkspacePostsDto) {
+    const { page, limit, status, contentType, search } = dto;
 
-  const where = {
-    workspaceId,
-    ...(status && { status }),
-    ...(contentType && { contentType }),
-    ...(search && {
-      content: { contains: search, mode: QueryMode.insensitive },
-    }),
-  };
+    const where = {
+      workspaceId,
+      ...(status && { status }),
+      ...(contentType && { contentType }),
+      ...(search && {
+        content: { contains: search, mode: QueryMode.insensitive },
+      }),
+    };
 
-  const [items, total] = await this.prisma.$transaction([
-    this.prisma.post.findMany({
-      where,
-      include: {
-        destinations: { include: { profile: true } },
-        media: {
-          include: { mediaFile: true },
-          orderBy: { order: 'asc' },
+    const [items, total] = await this.prisma.$transaction([
+      this.prisma.post.findMany({
+        where,
+        select: {
+          id: true,
+          workspaceId: true,
+          authorId: true,
+          content: true,
+          contentType: true,
+          status: true,
+          scheduledAt: true,
+          publishedAt: true,
+
+          destinations: {
+            select: {
+              id: true,
+              postId: true,
+              contentOverride: true,
+              profile: {
+                select: {
+                  platform: true,
+                  name: true,
+                  username: true,
+                  picture: true,
+                  type: true,
+                },
+              },
+            },
+          },
+          media: {
+            orderBy: { order: 'asc' },
+            select: {
+              id: true,
+              order: true,
+              mediaFile: {
+                select: {
+                  id: true,
+                  url: true,
+                  mimeType: true,
+                  size: true,
+                },
+              },
+            },
+          },
+
+          author: {
+            select: {
+              email: true,
+              firstName: true,
+            },
+          },
+
+          campaign: true,
         },
-        author: { select: { email: true, firstName: true } },
-        campaign: true,
+        orderBy: { createdAt: 'desc' },
+        skip: (page - 1) * limit,
+        take: limit,
+      }),
+
+      this.prisma.post.count({ where }),
+    ]);
+
+    const sanitizedItems = items.map((post) => ({
+      ...post,
+      media: post.media.map((m) => ({
+        ...m,
+        mediaFile: m.mediaFile
+          ? {
+              ...m.mediaFile,
+              size: m.mediaFile.size.toString(),
+            }
+          : null,
+      })),
+    }));
+
+    return {
+      data: sanitizedItems,
+      meta: {
+        page,
+        limit,
+        total,
+        totalPages: Math.ceil(total / limit),
       },
-      orderBy: { createdAt: 'desc' },
-      skip: (page - 1) * limit,
-      take: limit,
-    }),
-    this.prisma.post.count({ where }),
-  ]);
+    };
+  }
+  async bulkSchedulePosts(
+    user: any,
+    workspaceId: string,
+    dto: BulkCreatePostDto,
+  ) {
+    // We prepare the payloads for ALL posts first to fail fast if validation errors exist.
+    const preparedPosts = [];
 
-  return {
-    data: items,
-    meta: {
-      page,
-      limit,
-      total,
-      totalPages: Math.ceil(total / limit),
-    },
-  };
-}
-
-
-
-  async validateBulkCsv(user: any, workspaceId: string, fileBuffer: Buffer) {
-    this.ensureBulkFeature(user);
-
-    const rows = await this.parseCsv<BulkCsvRow>(fileBuffer);
-
-    // Fetch All Profiles (For Name AND ID lookup)
-    const workspaceProfiles = await this.prisma.socialProfile.findMany({
-      where: { workspaceId },
-      select: { id: true, name: true, platform: true },
-    });
-
-    // Create Maps for fast lookup
-    const idMap = new Set(workspaceProfiles.map((p) => p.id));
-    const nameMap = new Map(
-      workspaceProfiles.map((p) => [p.name.toLowerCase().trim(), p.id]),
-    );
-
-    const validPosts: PreparedPost[] = [];
-    const errors: BulkValidationError[] = [];
-
-    rows.forEach((row, index) => {
-      const rowNum = index + 1;
-      try {
-        if (!row.content) {
-          throw new Error('Content is required');
+    for (const postDto of dto.posts) {
+      // A. Basic Date Validation
+      if (postDto.scheduledAt) {
+        const scheduledDate = new Date(postDto.scheduledAt);
+        if (scheduledDate < new Date()) {
+          throw new BadRequestException(
+            `Post scheduled for ${postDto.scheduledAt} is in the past.`,
+          );
         }
+      }
 
-        if (!row.scheduled_at) {
-          throw new Error('scheduled_at is required');
-        }
+      // B. Prepare Destination Payloads
+      // This handles the "Twitter Thread vs LinkedIn Post" logic automatically
+      const payloads = await this.destinationBuilder.preparePayloads(
+        workspaceId,
+        postDto,
+      );
 
-        if (!row.profile_ids) {
-          throw new Error('profile_ids is required');
-        }
+      preparedPosts.push({ dto: postDto, payloads });
+    }
 
-        const scheduledAt = new Date(row.scheduled_at);
-        if (isNaN(scheduledAt.getTime())) {
-          throw new Error('Invalid scheduled_at (must be ISO 8601 UTC)');
-        }
+    // 3. The Transaction
+    // If one post fails, we roll back everything so the user can fix and retry.
+    return this.prisma.$transaction(async (tx) => {
+      const results = [];
 
-        if (scheduledAt < new Date()) {
-          throw new Error('Cannot schedule posts in the past');
-        }
+      for (const item of preparedPosts) {
+        const { dto: currentDto, payloads } = item;
 
-        // 2. INTELLIGENT PROFILE MATCHING
-        const rawInputs =
-          row.profile_ids?.split('|').map((s) => s.trim()) || [];
-        const resolvedIds: string[] = [];
+        // A. Create Master Post
+        const post = await this.postFactory.createMasterPost(
+          tx,
+          user.userId,
+          workspaceId,
+          currentDto,
+          'SCHEDULED', // Bulk posts are usually implicitly approved/scheduled
+        );
 
-        for (const input of rawInputs) {
-          if (idMap.has(input)) {
-            // Exact ID match
-            resolvedIds.push(input);
-          } else if (nameMap.has(input.toLowerCase())) {
-            // Name match (e.g. "Nike Facebook")
-            resolvedIds.push(nameMap.get(input.toLowerCase()));
-          } else {
-            throw new Error(`Could not find profile: '${input}'`);
+        // B. Save Destinations (Master)
+        await this.destinationBuilder.saveDestinations(tx, post.id, payloads);
+
+        // C. Handle Threads
+        // ----------------------------------------------------
+        const twitterPayloads = payloads.filter(
+          (p) => p.platform === 'TWITTER',
+        );
+
+        if (twitterPayloads.length > 0 && currentDto.threads?.length > 0) {
+          let previousPostId = post.id;
+
+          for (const threadItem of currentDto.threads) {
+            const threadPost = await this.postFactory.createThreadPost(
+              tx,
+              user.userId,
+              workspaceId,
+              previousPostId,
+              threadItem,
+              'SCHEDULED',
+              post.scheduledAt,
+              post.timezone,
+              currentDto.campaignId,
+            );
+
+            await this.destinationBuilder.saveDestinations(
+              tx,
+              threadPost.id,
+              twitterPayloads,
+            );
+            previousPostId = threadPost.id;
           }
         }
 
-        if (resolvedIds.length === 0)
-          throw new Error('No valid profiles found');
-
-        validPosts.push({
-          content: row.content,
-          scheduledAt: new Date(row.scheduled_at),
-          profileIds: resolvedIds,
-          mediaUrl: row.media_url,
-        });
-      } catch (err) {
-        errors.push({ row: rowNum, message: err.message });
+        results.push(post);
       }
-    });
 
-    return { validPosts, errors };
+      return results;
+    });
   }
 
-  async executeBulkSchedule(
-    user: any,
-    workspaceId: string,
-    posts: PreparedPost[],
-  ) {
-    this.ensureBulkFeature(user);
-
-    if (!posts || posts.length === 0)
-      throw new BadRequestException('No posts provided');
-
-    // ==================================================
-    //  SECURITY CHECK 1: OWNERSHIP RE-VALIDATION
-    // ==================================================
-
-    // Extract all unique Profile IDs the user is trying to touch
-    const requestedProfileIds = new Set<string>();
-    posts.forEach((p) =>
-      p.profileIds.forEach((id) => requestedProfileIds.add(id)),
-    );
-    const uniqueIds = Array.from(requestedProfileIds);
-
-    // Ask DB: "Count how many of THESE IDs belong to THIS Workspace"
-    const count = await this.prisma.socialProfile.count({
-      where: {
-        id: { in: uniqueIds },
-        workspaceId: workspaceId,
-      },
+  async updatePost(workspaceId: string, postId: string, dto: UpdatePostDto) {
+    //  Fetch the post to check permissions & status
+    const post = await this.prisma.post.findFirst({
+      where: { id: postId, workspaceId },
+      include: { media: true },
     });
 
-    // If the DB found fewer profiles than requested, someone is lying (or spoofing)
-    if (count !== uniqueIds.length) {
-      throw new ForbiddenException(
-        'Security Alert: One or more profiles do not belong to this workspace.',
+    if (!post) throw new NotFoundException('Post not found');
+
+    // 2. STATUS CHECK: Can't edit if it's already publishing
+    if (post.status === 'PUBLISHING' || post.status === 'PUBLISHED') {
+      throw new BadRequestException(
+        'Cannot edit a post that is published or processing.',
       );
     }
 
-    // ==================================================
-    // SECURITY CHECK 2: TIME & CONTENT
-    // ==================================================
-    const now = new Date();
+    // 3. TRANSACTION (Update content & media)
+    return this.prisma.$transaction(async (tx) => {
+      // A. Update Basic Fields
+      const updatedPost = await tx.post.update({
+        where: { id: postId },
+        data: {
+          content: dto.content,
+          scheduledAt: dto.scheduledAt, // Changing this moves the post in the calendar
+          // If the status was 'FAILED', reset it to 'SCHEDULED' or 'DRAFT'
+          status: post.status === 'FAILED' ? 'DRAFT' : undefined,
+        },
+      });
 
-    // Quick in-memory loop (very fast)
-    for (const post of posts) {
-      const scheduledAt = new Date(post.scheduledAt);
+      // B. Handle Media Updates (If provided)
+      // The simplest strategy: "Wipe and Replace" for the specific post
+      if (dto.mediaIds) {
+        // 1. Remove old links
+        await tx.postMedia.deleteMany({ where: { postId } });
 
-      // Check for "Time Travel" or delayed submission
-      if (scheduledAt < now) {
-        throw new BadRequestException(
-          'One or more posts are scheduled in the past. Please re-upload.',
-        );
-      }
-
-      if (!post.content) {
-        throw new BadRequestException('Content is missing in payload');
-      }
-    }
-
-    // Define a list to hold jobs we need to trigger AFTER the transaction succeeds
-    const backgroundJobs: { mediaId: string; workspaceId: string }[] = [];
-
-    // SAVE TO DB
-    await this.prisma.$transaction(async (tx) => {
-      for (const post of posts) {
-        // 1. Create Post
-        const createdPost = await tx.post.create({
-          data: {
-            workspaceId,
-            authorId: user.id,
-            content: post.content,
-            scheduledAt: post.scheduledAt,
-            status: 'SCHEDULED', // Safe to use here
-            timezone: 'UTC',
-          },
-        });
-
-        // 2. Handle Media (Placeholder + Link)
-        if (post.mediaUrl) {
-          // A. Create the Placeholder MediaFile
-          // ⚠️ Must provide ALL required fields with dummy data
-          const mediaFile = await tx.mediaFile.create({
-            data: {
-              workspaceId,
-              userId: user.id,
-              url: post.mediaUrl, // The External URL
-
-              // Dummy Metadata (Required for DB Constraint)
-              filename: 'csv_import_pending',
-              originalName: 'external_image',
-              mimeType: 'image/jpeg',
-              size: 0,
-              publicId: `external_${Date.now()}_${Math.random().toString(36).substring(7)}`,
-              isAIGenerated: false,
-            },
-          });
-
-          // B. 🔗 LINK IT TO THE POST (Critical Step!)
-          // Without this, the post doesn't know it has media
-          await tx.postMedia.create({
-            data: {
-              postId: createdPost.id,
-              mediaFileId: mediaFile.id,
-              order: 0,
-            },
-          });
-
-          // C. Add to our "To-Do" list (don't add to Queue yet)
-          backgroundJobs.push({ mediaId: mediaFile.id, workspaceId });
-        }
-
-        // 3. Create Destinations
-        await tx.postDestination.createMany({
-          data: post.profileIds.map((profileId) => ({
-            postId: createdPost.id,
-            socialProfileId: profileId,
-            status: 'SCHEDULED',
+        // 2. Add new links
+        await tx.postMedia.createMany({
+          data: dto.mediaIds.map((mid, idx) => ({
+            postId,
+            mediaFileId: mid,
+            order: idx,
           })),
         });
       }
-    });
 
-    // 🚀 4. TRIGGER BACKGROUND JOBS (Safe Zone)
-    // We only reach here if the transaction committed successfully
-    if (backgroundJobs.length > 0) {
-      // Use Promise.all to fire them rapidly
-      await Promise.all(
-        backgroundJobs.map((job) => this.mediaIngestQueue.add('ingest', job)),
-      );
-    }
-  }
-
-async updatePost(workspaceId: string, postId: string, dto: UpdatePostDto) {
-  //  Fetch the post to check permissions & status
-  const post = await this.prisma.post.findFirst({
-    where: { id: postId, workspaceId },
-    include: { media: true }
-  });
-
-  if (!post) throw new NotFoundException('Post not found');
-
-  // 2. STATUS CHECK: Can't edit if it's already publishing
-  if (post.status === 'PUBLISHING' || post.status === 'PUBLISHED') {
-    throw new BadRequestException('Cannot edit a post that is published or processing.');
-  }
-
-  // 3. TRANSACTION (Update content & media)
-  return this.prisma.$transaction(async (tx) => {
-    
-    // A. Update Basic Fields
-    const updatedPost = await tx.post.update({
-      where: { id: postId },
-      data: {
-        content: dto.content,
-        scheduledAt: dto.scheduledAt, // Changing this moves the post in the calendar
-        // If the status was 'FAILED', reset it to 'SCHEDULED' or 'DRAFT'
-        status: post.status === 'FAILED' ? 'DRAFT' : undefined, 
+      // C. Special Thread Handling (If updating the ROOT post's time)
+      // If you move the Root Post from 9:00 AM to 10:00 AM,
+      // you must move ALL children threads to 10:00 AM too.
+      if (dto.scheduledAt && post.contentType !== 'THREAD') {
+        // Find all children (recursive update is hard, but 1-level deep is usually enough for threads)
+        // Or better: update all posts in this "thread chain"
+        // We can find them by parentPostId, or walk the tree.
+        // For MVP: Just update direct children.
+        await tx.post.updateMany({
+          where: { parentPostId: postId },
+          data: { scheduledAt: dto.scheduledAt },
+        });
       }
+
+      return updatedPost;
     });
-
-    // B. Handle Media Updates (If provided)
-    // The simplest strategy: "Wipe and Replace" for the specific post
-    if (dto.mediaIds) {
-      // 1. Remove old links
-      await tx.postMedia.deleteMany({ where: { postId } });
-      
-      // 2. Add new links
-      await tx.postMedia.createMany({
-        data: dto.mediaIds.map((mid, idx) => ({
-          postId,
-          mediaFileId: mid,
-          order: idx
-        }))
-      });
-    }
-
-    // C. Special Thread Handling (If updating the ROOT post's time)
-    // If you move the Root Post from 9:00 AM to 10:00 AM, 
-    // you must move ALL children threads to 10:00 AM too.
-    if (dto.scheduledAt && post.contentType !== 'THREAD') {
-       // Find all children (recursive update is hard, but 1-level deep is usually enough for threads)
-       // Or better: update all posts in this "thread chain"
-       // We can find them by parentPostId, or walk the tree.
-       // For MVP: Just update direct children.
-       await tx.post.updateMany({
-         where: { parentPostId: postId },
-         data: { scheduledAt: dto.scheduledAt }
-       });
-    }
-
-    return updatedPost;
-  });
-}
-
-async deletePost(workspaceId: string, postId: string) {
-  const post = await this.getOne(workspaceId, postId);
-
-  // 1. Recursive Delete Helper
-  // We need to find all children, grandchildren, etc.
-  // Since Prisma "NoAction" doesn't cascade automatically for self-relations sometimes,
-  // we do it manually to be safe.
-  
-  const deleteIds = [postId];
-  
-  // Find children
-  const children = await this.prisma.post.findMany({ where: { parentPostId: postId } });
-  for (const child of children) {
-    deleteIds.push(child.id);
-    // (If you allow deep nesting, you'd recurse here, but Twitter threads are usually flat linked lists)
-    // For simplicity, we assume we delete the chain.
   }
 
-  return this.prisma.post.deleteMany({
-    where: { id: { in: deleteIds } }
-  });
-}
+  async deletePost(workspaceId: string, postId: string) {
+    const post = await this.getOne(workspaceId, postId);
 
-async getOne(workspaceId: string, postId: string) {
-  const post = await this.prisma.post.findFirst({
-    where: { id: postId, workspaceId },
-    include: {
-      destinations: { include: { profile: true } },
-      media: { include: { mediaFile: true }, orderBy: { order: 'asc' } },
-      
-      // INCLUDE CHILDREN (The Thread)
-      childPosts: {
-        orderBy: { createdAt: 'asc' }, // Threads are usually ordered by creation
-        include: {
-           media: { include: { mediaFile: true } }
-        }
-      },
-      
-      // INCLUDE PARENT 
-      parentPost: true 
+    // 1. Recursive Delete Helper
+    // We need to find all children, grandchildren, etc.
+    // Since Prisma "NoAction" doesn't cascade automatically for self-relations sometimes,
+    // we do it manually to be safe.
+
+    const deleteIds = [postId];
+
+    // Find children
+    const children = await this.prisma.post.findMany({
+      where: { parentPostId: postId },
+    });
+    for (const child of children) {
+      deleteIds.push(child.id);
+      // (If you allow deep nesting, you'd recurse here, but Twitter threads are usually flat linked lists)
+      // For simplicity, we assume we delete the chain.
     }
-  });
 
-  if (!post) throw new NotFoundException('Post not found');
-  return post;
-}
+    return this.prisma.post.deleteMany({
+      where: { id: { in: deleteIds } },
+    });
+  }
 
-
-  // Get all pending approvals for a workspace
-async getPendingApprovals(
-  workspaceId: string,
-  pagination: { page: number; limit: number },
-) {
-  const { page, limit } = pagination;
-
-  const where = {
-    post: { workspaceId },
-    status: 'PENDING' as const,
-  };
-
-  const [items, total] = await this.prisma.$transaction([
-    this.prisma.postApproval.findMany({
-      where,
-      include: {
-        post: {
-          select: {
-            content: true,
-            scheduledAt: true,
-            contentType: true,
-          },
-        },
-        requester: {
+  async getOne(workspaceId: string, postId: string) {
+    const post = await this.prisma.post.findFirst({
+      where: { id: postId, workspaceId },
+      select: {
+        id: true,
+        workspaceId: true,
+        authorId: true,
+        content: true,
+        contentType: true,
+        status: true,
+        scheduledAt: true,
+        publishedAt: true,
+        destinations: {
           select: {
             id: true,
-            firstName: true,
-            email: true,
+            postId: true,
+            contentOverride: true,
+            profile: {
+              select: {
+                platform: true,
+                name: true,
+                username: true,
+                picture: true,
+                type: true,
+              },
+            },
           },
         },
+        media: {
+          orderBy: { order: 'asc' },
+          select: {
+            id: true,
+            order: true,
+            mediaFile: {
+              select: {
+                id: true,
+                url: true,
+                mimeType: true,
+                size: true,
+              },
+            },
+          },
+        },
+
+        author: {
+          select: {
+            email: true,
+            firstName: true,
+          },
+        },
+        childPosts: {
+          orderBy: { createdAt: 'asc' }, // Threads are usually ordered by creation
+          select: {
+            id: true,
+            workspaceId: true,
+            authorId: true,
+            content: true,
+            contentType: true,
+            status: true,
+            scheduledAt: true,
+            publishedAt: true,
+            destinations: {
+              select: {
+                id: true,
+                postId: true,
+                contentOverride: true,
+                profile: {
+                  select: {
+                    platform: true,
+                    name: true,
+                    username: true,
+                    picture: true,
+                    type: true,
+                  },
+                },
+              },
+            },
+            media: {
+              orderBy: { order: 'asc' },
+              select: {
+                id: true,
+                order: true,
+                mediaFile: {
+                  select: {
+                    id: true,
+                    url: true,
+                    mimeType: true,
+                    size: true,
+                  },
+                },
+              },
+            },
+
+            author: {
+              select: {
+                email: true,
+                firstName: true,
+              },
+            },
+          },
+        },
+
+        // INCLUDE PARENT
+        parentPost: true,
       },
-      orderBy: { requestedAt: 'asc' },
-      skip: (page - 1) * limit,
-      take: limit,
-    }),
+    });
 
-    this.prisma.postApproval.count({ where }),
-  ]);
+    if (!post) throw new NotFoundException('Post not found');
+    return {
+      ...post,
+      media: post.media.map((m) => ({
+        ...m,
+        mediaFile: m.mediaFile
+          ? {
+              ...m.mediaFile,
+              size: m.mediaFile.size.toString(),
+            }
+          : null,
+      })),
+      childPosts: post.childPosts.map((child) => ({
+        ...child,
+        media: child.media.map((m) => ({
+          ...m,
+          mediaFile: m.mediaFile
+            ? {
+                ...m.mediaFile,
+                size: m.mediaFile.size.toString(),
+              }
+            : null,
+        })),
+      })),
+    };
+  }
 
-  return {
-    data: items,
-    meta: {
-      page,
-      limit,
-      total,
-      totalPages: Math.ceil(total / limit),
-    },
-  };
-}
+  // Get all pending approvals for a workspace
+  async getPendingApprovals(
+    workspaceId: string,
+    pagination: { page: number; limit: number },
+  ) {
+    const { page, limit } = pagination;
 
+    const where = {
+      post: { workspaceId },
+      status: 'PENDING' as const,
+    };
+
+    const [items, total] = await this.prisma.$transaction([
+      this.prisma.postApproval.findMany({
+        where,
+        include: {
+          post: {
+            select: {
+              content: true,
+              scheduledAt: true,
+              contentType: true,
+            },
+          },
+          requester: {
+            select: {
+              id: true,
+              firstName: true,
+              email: true,
+            },
+          },
+        },
+        orderBy: { requestedAt: 'asc' },
+        skip: (page - 1) * limit,
+        take: limit,
+      }),
+
+      this.prisma.postApproval.count({ where }),
+    ]);
+
+    return {
+      data: items,
+      meta: {
+        page,
+        limit,
+        total,
+        totalPages: Math.ceil(total / limit),
+      },
+    };
+  }
 
   // Approve or Reject (The Decision)
   async reviewApproval(
-    approver: User, 
-    workspaceId: string, 
+    approver: User,
+    workspaceId: string,
     approvalId: string,
-    status: 'APPROVED' | 'REJECTED', 
-    notes?: string
+    status: 'APPROVED' | 'REJECTED',
+    notes?: string,
   ) {
     // Fetch Approval & Verify Workspace
     const approval = await this.prisma.postApproval.findFirst({
       where: { id: approvalId, post: { workspaceId } },
-      include: { post: true }
+      include: { post: true },
     });
 
     if (!approval) throw new NotFoundException('Approval request not found');
-    if (approval.status !== 'PENDING') throw new BadRequestException('Already reviewed');
+    if (approval.status !== 'PENDING')
+      throw new BadRequestException('Already reviewed');
 
     return this.prisma.$transaction(async (tx) => {
       //Update Approval Record
@@ -584,8 +668,8 @@ async getPendingApprovals(
           status,
           approverId: approver.id,
           reviewedAt: new Date(),
-          notes: notes
-        }
+          notes: notes,
+        },
       });
 
       // Update Post Status
@@ -594,8 +678,8 @@ async getPendingApprovals(
       await tx.post.update({
         where: { id: approval.postId },
         data: {
-          status: status === 'APPROVED' ? 'SCHEDULED' : 'DRAFT'
-        }
+          status: status === 'APPROVED' ? 'SCHEDULED' : 'DRAFT',
+        },
       });
 
       return updatedApproval;
@@ -603,17 +687,23 @@ async getPendingApprovals(
   }
 
   //  DELETE: Cancel a Request
-  async cancelApprovalRequest(userId: string, workspaceId: string, approvalId: string) {
+  async cancelApprovalRequest(
+    userId: string,
+    workspaceId: string,
+    approvalId: string,
+  ) {
     const approval = await this.prisma.postApproval.findFirst({
-      where: { id: approvalId, post: { workspaceId } }
+      where: { id: approvalId, post: { workspaceId } },
     });
 
     if (!approval) throw new NotFoundException('Request not found');
-    
+
     // Security: Only the requester (or an Admin) should be able to cancel
     if (approval.requesterId !== userId) {
-      throw new ForbiddenException('You are not authorized to cancel this request.');
-       // In a real app, check if user is Admin, otherwise throw Forbidden
+      throw new ForbiddenException(
+        'You are not authorized to cancel this request.',
+      );
+      // In a real app, check if user is Admin, otherwise throw Forbidden
     }
 
     return this.prisma.$transaction(async (tx) => {
@@ -623,12 +713,12 @@ async getPendingApprovals(
       // 2. Set Post back to DRAFT
       await tx.post.update({
         where: { id: approval.postId },
-        data: { status: 'DRAFT' }
+        data: { status: 'DRAFT' },
       });
     });
   }
 
-    private ensureBulkFeature(user: any) {
+  private ensureBulkFeature(user: any) {
     const features =
       user['features'] || user['organization']?.subscription?.plan?.features;
 

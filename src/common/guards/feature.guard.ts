@@ -1,4 +1,4 @@
-import { PlanFeatures } from '@/billing/types/billing.types';
+import { PlanFeatures } from '@/common/constants/billing.types';
 import {
   Injectable,
   CanActivate,

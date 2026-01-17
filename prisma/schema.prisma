@@ -424,6 +424,8 @@ model PostDestination {
   createdAt       DateTime       @default(now())
   publishedAt     DateTime?
 
+  metadata        Json? 
+
   @@unique([postId, socialProfileId]) 
   @@index([status])
 }

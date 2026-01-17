@@ -88,6 +88,7 @@ export class DestinationBuilder {
         payloads.push({
           socialProfileId: profile.id,
           status: 'SCHEDULED', // Or pass status in if needed
+          platform: profile.platform,
           contentOverride: result.finalContent, // The Main Post
           metadata: result.threadChain?.length
             ? { threadChain: result.threadChain } // The Thread Parts
