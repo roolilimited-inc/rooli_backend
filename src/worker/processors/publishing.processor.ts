@@ -38,8 +38,6 @@ export class PublishingProcessor extends WorkerHost {
   async processPostChain(postId: string, parentPlatformId?: string) {
     try {
       // 1. Fetch Post
-      // We do NOT need to fetch 'parentPost' anymore because we passed the ID in the arguments.
-      // This makes the query faster and lighter.
       const post = await this.prisma.post.findUnique({
         where: { id: postId },
         include: {
@@ -61,16 +59,15 @@ export class PublishingProcessor extends WorkerHost {
       // 2. Process Destinations
       const results = await Promise.allSettled(
         post.destinations.map(async (dest) => {
-          
           // 🛑 GUARD: THREAD LOGIC (Safety Net)
-          // Even if the Service layer filtered these out, this protects us 
+          // Even if the Service layer filtered these out, this protects us
           // from accidental DB manual inserts.
           if (post.parentPostId && dest.profile.platform !== 'TWITTER') {
-             return { 
-               destinationId: dest.id, 
-               status: 'SKIPPED', 
-               message: 'Threading not supported on this platform' 
-             };
+            return {
+              destinationId: dest.id,
+              status: 'SKIPPED',
+              message: 'Threading not supported on this platform',
+            };
           }
 
           // A. Resolve Reply ID (Twitter Only)
@@ -78,15 +75,18 @@ export class PublishingProcessor extends WorkerHost {
 
           // If we are in a recursion (parentPlatformId exists) AND this is Twitter
           if (parentPlatformId && dest.profile.platform === 'TWITTER') {
-             replyToId = parentPlatformId;
+            replyToId = parentPlatformId;
           }
 
           // B. Publish
-          const provider = this.socialFactory.getProvider(dest.profile.platform);
-          
+          const provider = this.socialFactory.getProvider(
+            dest.profile.platform,
+          );
+
           const credentials = {
-            accessToken: dest.profile.accessToken || dest.profile.connection.accessToken,
-            accessSecret: dest.profile.connection.refreshToken, 
+            accessToken:
+              dest.profile.accessToken || dest.profile.connection.accessToken,
+            accessSecret: dest.profile.connection.refreshToken,
           };
 
           const result = await provider.publish(
@@ -99,7 +99,10 @@ export class PublishingProcessor extends WorkerHost {
             },
           );
 
-          return { destinationId: dest.id, platformPostId: result.platformPostId };
+          return {
+            destinationId: dest.id,
+            platformPostId: result.platformPostId,
+          };
         }),
       );
 
@@ -110,16 +113,16 @@ export class PublishingProcessor extends WorkerHost {
 
       for (let i = 0; i < results.length; i++) {
         const result = results[i];
-        
+
         // ⚠️ Access destination by index because Promise.allSettled preserves order
-        const dest = post.destinations[i]; 
+        const dest = post.destinations[i];
 
         if (result.status === 'fulfilled') {
           const val = result.value as any;
 
           // Handle SKIP logic (Don't count as success or fail, just ignore)
           if (val.status === 'SKIPPED') {
-             continue; 
+            continue;
           }
 
           await this.prisma.postDestination.update({
@@ -131,24 +134,30 @@ export class PublishingProcessor extends WorkerHost {
               errorMessage: null,
             },
           });
-          
+
           // 🔑 CAPTURE THE ID FOR THE NEXT CHILD
           // If this was a Twitter post, this is the ID Tweet #2 needs to reply to.
           if (val.platformPostId) {
-            nextParentId = val.platformPostId;
+            // 🛑 FIX: Only capture the ID if this destination is the "Thread-Compatible" one (Twitter)
+            // You can check the destination's profile platform
+            if (dest.profile.platform === 'TWITTER') {
+              nextParentId = val.platformPostId;
+            }
           }
-          
+
           successCount++;
         } else {
           failCount++;
           const error = result.reason;
           const isRateLimit = error.response?.status === 429;
-          
+
           await this.prisma.postDestination.update({
             where: { id: dest.id },
             data: {
               status: 'FAILED',
-              errorMessage: isRateLimit ? 'Rate limit hit' : (error.message || 'Unknown error'),
+              errorMessage: isRateLimit
+                ? 'Rate limit hit'
+                : error.message || 'Unknown error',
             },
           });
         }
@@ -156,14 +165,14 @@ export class PublishingProcessor extends WorkerHost {
 
       // 4. Update Master Status
       let finalStatus = 'PUBLISHED';
-      
+
       // Calculate status based on actual attempts (excluding skipped)
-      const attemptCount = post.destinations.length; 
-      
+      const attemptCount = post.destinations.length;
+
       if (attemptCount > 0 && failCount === attemptCount) {
-         finalStatus = 'FAILED';
+        finalStatus = 'FAILED';
       } else if (failCount > 0) {
-         finalStatus = 'PARTIAL';
+        finalStatus = 'PARTIAL';
       }
 
       await this.prisma.post.update({
@@ -174,12 +183,10 @@ export class PublishingProcessor extends WorkerHost {
       // 5. Continue Chain
       // 🛑 CORRECTION 2: Pass the ID we captured ('nextParentId') to the child
       if (post.childPosts.length > 0 && nextParentId) {
-        
         // Recursive Call:
         // "Hey Child Post, here is your Parent's Twitter ID (nextParentId). Reply to it."
         await this.processPostChain(post.childPosts[0].id, nextParentId);
       }
-
     } catch (error) {
       this.logger.error(`System Error: ${error.message}`, error);
       // Don't rethrow unless you want the job to retry indefinitely

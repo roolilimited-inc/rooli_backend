@@ -1406,6 +1406,6 @@ enum AiType {
 
 enum AiProvider {
   OPENAI
-  ANTHROPIC
   GEMINI
+  HUGGINGFACE
 }

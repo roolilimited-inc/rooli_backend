@@ -34,7 +34,7 @@ export class MembersController {
     description: 'List of organization members returned',
   })
   async getMembers(@Param('orgId') orgId: string, @Req() req) {
-    return this.membersService.getOrganizationMembers(orgId, req.user.id);
+    return this.membersService.getOrganizationMembers(orgId, req.user.userId);
   }
 
   @Post()
@@ -48,7 +48,7 @@ export class MembersController {
     return this.membersService.addMember(
       orgId,
       dto,
-      req.user.id,
+      req.user.userId,
     );
   }
 
@@ -61,7 +61,7 @@ export class MembersController {
     @Req() req,
     @Body() dto: UpdateMemberDto,
   ) {
-    return this.membersService.updateMember(orgId, memberId, req.user.id, dto);
+    return this.membersService.updateMember(orgId, memberId, req.user.userId, dto);
   }
 
   @Delete(':memberId')
@@ -74,13 +74,13 @@ export class MembersController {
     @Param('memberId') memberId: string,
     @Req() req,
   ) {
-    return this.membersService.removeMember(orgId, memberId, req.user.id);
+    return this.membersService.removeMember(orgId, memberId, req.user.userId);
   }
 
   @Post('leave')
   @ApiOperation({ summary: 'Leave the organization (for non-owners)' })
   @ApiResponse({ status: 200, description: 'Successfully left organization' })
   async leaveOrganization(@Param('orgId') orgId: string, @Req() req) {
-    return this.membersService.leaveOrganization(orgId, req.user.id);
+    return this.membersService.leaveOrganization(orgId, req.user.userId);
   }
 }

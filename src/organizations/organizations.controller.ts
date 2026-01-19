@@ -51,7 +51,7 @@ export class OrganizationsController {
     },
   })
   async createOrganization(@Req() req, @Body() dto: CreateOrganizationDto) {
-    return this.organizationsService.createOrganization(req.user.id, dto);
+    return this.organizationsService.createOrganization(req.user.userId, dto);
   }
 
   @Get()
@@ -130,6 +130,6 @@ export class OrganizationsController {
     },
   })
   async deleteOrganization(@Req() req, @Param('id') orgId: string) {
-    return this.organizationsService.deleteOrganization(orgId, req.user.id);
+    return this.organizationsService.deleteOrganization(orgId, req.user.userId);
   }
 }

@@ -19,11 +19,11 @@ export class WorkspaceController {
   @ApiResponse({ status: 201, description: 'Workspace created successfully' })
   @ApiResponse({ status: 403, description: 'Workspace limit reached' })
   async create(
-    @CurrentUser() user: { id: string },
+    @CurrentUser() user: { userId: string },
     @Param('orgId') orgId: string,
     @Body() dto: CreateWorkspaceDto,
   ) {
-    return this.workspaceService.create(user.id, orgId, dto);
+    return this.workspaceService.create(user.userId, orgId, dto);
   }
 
 
@@ -75,10 +75,10 @@ export class WorkspaceController {
   })
   @ApiParam({ name: 'id', description: 'Workspace ID' })
   async switchWorkspace(
-    @CurrentUser() user: { id: string },
+    @CurrentUser() user: { userId: string },
     @Param('id') workspaceId: string,
   ) {
-    return this.workspaceService.switchWorkspace(user.id, workspaceId);
+    return this.workspaceService.switchWorkspace(user.userId, workspaceId);
   }
 
 

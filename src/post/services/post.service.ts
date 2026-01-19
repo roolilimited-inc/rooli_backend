@@ -7,13 +7,6 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { CreatePostDto } from '../dto/request/create-post.dto';
-import csv from 'csv-parser';
-import { Readable } from 'stream';
-import {
-  BulkCsvRow,
-  BulkValidationError,
-  PreparedPost,
-} from '../interfaces/post.interface';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import { UpdatePostDto } from '../dto/request/update-post.dto';
@@ -718,27 +711,5 @@ export class PostService {
     });
   }
 
-  private ensureBulkFeature(user: any) {
-    const features =
-      user['features'] || user['organization']?.subscription?.plan?.features;
 
-    if (!features?.bulkScheduling) {
-      throw new ForbiddenException(
-        'Bulk scheduling is a Business Plan feature.',
-      );
-    }
-  }
-
-  private async parseCsv<T>(buffer: Buffer): Promise<T[]> {
-    const results: T[] = [];
-    const stream = Readable.from(buffer);
-
-    return new Promise((resolve, reject) => {
-      stream
-        .pipe(csv())
-        .on('data', (data) => results.push(data))
-        .on('end', () => resolve(results))
-        .on('error', reject);
-    });
-  }
 }

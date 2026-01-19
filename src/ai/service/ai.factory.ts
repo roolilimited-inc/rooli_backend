@@ -1,40 +1,48 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { IAiProvider } from '../interfaces/ai-provider.interface';
-import { AnthropicProvider } from '../providers/anthropic.provider';
 import { GeminiProvider } from '../providers/gemini.provider';
-import { OpenAiProvider } from '../providers/openai.provider';
-import { ReplicateProvider } from '../providers/replicate.provider';
-
-
+import { AiProvider } from '@generated/enums';
+import { HuggingFaceProvider } from '../providers/hugging-face.provider';
 
 @Injectable()
 export class AiFactory {
+  private readonly logger = new Logger(AiFactory.name);
+  
   constructor(
-    private openai: OpenAiProvider,
-    private gemini: GeminiProvider,
-    private anthropic: AnthropicProvider,
-    private replicate: ReplicateProvider,
+ private gemini: GeminiProvider,       // 🚀 Prod: Imagen 3 (Paid)
+    private huggingFace: HuggingFaceProvider
   ) {}
 
+/**
+   * 🏭 TEXT Provider Selector
+   * Routes based on User Plan (e.g., Gemini for Free, Anthropic for Rocket)
+   */
   getProvider(providerName: AiProvider): IAiProvider {
     switch (providerName) {
-      case 'OPENAI':
-        return this.openai;
       case 'GEMINI':
         return this.gemini;
-      case 'ANTHROPIC':
-        return this.anthropic;
-      case 'REPLICATE':
-        return this.replicate;
-      // Note: Stability is usually requested explicitly for images, 
-      // not generic text generation.
+      // case 'ANTHROPIC': return this.anthropic; // Add later if needed
       default:
-        return this.openai; // Default fallback
+        return this.gemini; // Default fallback
     }
   }
 
+  /**
+   * 🎨 IMAGE Provider Selector
+   * Routes based on Environment (Dev vs Prod) to save money.
+   */
   getImageProvider(): IAiProvider {
-    // Return OpenAI (DALL-E) or Stability based on config
-    return this.stability; 
+  //   // 1. DEVELOPMENT MODE
+  //   if (process.env.NODE_ENV === 'development') {
+  //     this.logger.debug('🎨 Mode: DEV. Routing to Hugging Face (Free).');
+  //     return this.huggingFace;
+  //   }
+
+  //   this.logger.log('🚀 Mode: PROD. Routing to Gemini Imagen 3 (Paid).');
+  //   return this.gemini; 
+  // }
+  // Temporary: Always use Hugging Face for now to save costs
+    this.logger.log('🎨 Routing all image generation to Hugging Face.');
+    return this.huggingFace;
   }
 }

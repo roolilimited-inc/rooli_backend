@@ -59,7 +59,7 @@ export class UserController {
     @Req() req,
     @Body() dto: UpdateProfileDto,
   ): Promise<SafeUser> {
-    return this.usersService.updateProfile(req.user.id, dto);
+    return this.usersService.updateProfile(req.user.userId, dto);
   }
 
   @Patch('me/password')
@@ -73,7 +73,7 @@ export class UserController {
     @Req() req,
     @Body() dto: ChangePasswordDto,
   ): Promise<void> {
-    return this.usersService.changePassword(req.user.id, dto);
+    return this.usersService.changePassword(req.user.userId, dto);
   }
 
   @Delete('me')
@@ -83,7 +83,7 @@ export class UserController {
   })
   @ApiResponse({ status: 200, description: 'Account deactivated' })
   async deactivateAccount(@Req() req): Promise<void> {
-    return this.usersService.deactivateMyAccount(req.user.id);
+    return this.usersService.deactivateMyAccount(req.user.userId);
   }
 
   //there should be a guard to restrict organization access
