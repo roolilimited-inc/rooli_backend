@@ -25,6 +25,7 @@ export class FacebookService {
   'email',
   'public_profile',
   'pages_show_list',
+  'business_management',
   'pages_read_engagement', // For FB Analytics
   'pages_manage_posts',    // For FB Posting
   'pages_manage_engagement', // For FB Comments/DMs
