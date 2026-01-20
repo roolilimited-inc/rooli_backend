@@ -3,6 +3,8 @@ import { Job } from 'bullmq';
 import { Logger } from '@nestjs/common';
 import { PrismaService } from '@/prisma/prisma.service';
 import { SocialFactory } from '@/social/social.factory';
+import { EncryptionService } from '@/common/utility/encryption.service';
+import { raw } from 'express';
 
 //This is where the magic happens. It receives the postId, loads the data, and (for now) stubs the API call.
 @Processor('publishing-queue')
@@ -12,6 +14,7 @@ export class PublishingProcessor extends WorkerHost {
   constructor(
     private prisma: PrismaService,
     private socialFactory: SocialFactory,
+    private encryptionService: EncryptionService,
   ) {
     super();
   }
@@ -49,6 +52,8 @@ export class PublishingProcessor extends WorkerHost {
         },
       });
 
+      console.log(post)
+
       if (!post) return;
 
       const mediaPayload = post.media.map((m) => ({
@@ -83,11 +88,27 @@ export class PublishingProcessor extends WorkerHost {
             dest.profile.platform,
           );
 
+
+         const rawAccessToken = await this.encryptionService.decrypt(
+             dest.profile.accessToken || dest.profile.connection.accessToken
+          );
+          console.log(rawAccessToken)
+          
+          // Note: Ensure 'refreshToken' is actually the secret you want. 
+          // For Twitter v1, you usually have a separate 'accessSecret' column.
+          // If you are using refreshToken as a placeholder, decrypt it too.
+          const rawAccessSecret = dest.profile.connection.refreshToken 
+             ? await this.encryptionService.decrypt(dest.profile.connection.refreshToken)
+             : '';
+
+             console.log(rawAccessSecret)
+
           const credentials = {
-            accessToken:
-              dest.profile.accessToken || dest.profile.connection.accessToken,
-            accessSecret: dest.profile.connection.refreshToken,
+            accessToken: rawAccessToken,
+            accessSecret: rawAccessSecret,
           };
+
+          console.log(credentials)
 
           const result = await provider.publish(
             credentials,
@@ -96,6 +117,7 @@ export class PublishingProcessor extends WorkerHost {
             {
               pageId: dest.profile.platformId,
               replyToPostId: replyToId, // 👈 Uses the ID passed from the previous loop
+              postType: post.contentType
             },
           );
 
@@ -172,7 +194,7 @@ export class PublishingProcessor extends WorkerHost {
       if (attemptCount > 0 && failCount === attemptCount) {
         finalStatus = 'FAILED';
       } else if (failCount > 0) {
-        finalStatus = 'PARTIAL';
+        finalStatus = 'FAILED';
       }
 
       await this.prisma.post.update({

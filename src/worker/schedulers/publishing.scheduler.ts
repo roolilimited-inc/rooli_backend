@@ -19,6 +19,7 @@ export class PublishingScheduler {
   // Runs every minute (at :00 seconds)
   //@Cron(CronExpression.EVERY_MINUTE)
   async handleScheduledPosts() {
+    this.logger.debug('⏰ CRON IS ALIVE: Checking for posts...');
     
     // 1. Find "Due" Posts
     // Criteria: Status is SCHEDULED AND Time is in the past (or now)
@@ -34,6 +35,7 @@ export class PublishingScheduler {
       take: 50, // Process in batches to avoid RAM spikes
     });
 
+    console.log(`PublishingScheduler found ${duePosts.length} due posts at ${now.toISOString()}`);
     if (duePosts.length === 0) return;
 
     this.logger.log(`Found ${duePosts.length} posts due for publishing.`);

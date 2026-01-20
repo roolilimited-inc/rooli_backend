@@ -66,6 +66,11 @@ export class TwitterService {
       // C. Exchange for Permanent User Tokens
       const { accessToken, accessSecret, userId, screenName } = await client.login(oauth_verifier);
 
+      console.log('Twitter login successful for user:', screenName);
+      console.log('User ID:', userId);
+      console.log('Access Token:', accessToken);
+      console.log('Access Secret:', accessSecret);
+
       // Cleanup
       await this.redisService.del(`twitter_auth:${oauth_token}`);
 

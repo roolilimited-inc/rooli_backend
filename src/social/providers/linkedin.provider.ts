@@ -158,6 +158,9 @@ async publish(
       },
     );
 
+    console.log('LinkedIn Image Upload Init Response:');
+    console.log(initResp.data);
+
     const uploadUrl = initResp.data.value.uploadUrl;
     const assetUrn = initResp.data.value.image;
 
@@ -213,6 +216,9 @@ async publish(
           },
         },
       );
+
+      console.log('LinkedIn Video Upload Init Response:');
+      console.log(initResp.data);
 
       const instructions = initResp.data.value.uploadInstructions; // Array of chunks
       const uploadToken = initResp.data.value.uploadToken;
@@ -305,6 +311,9 @@ async publish(
         },
       },
     );
+
+    console.log('LinkedIn Document Upload Init Response:');
+    console.log(initResp.data);
 
     const uploadUrl = initResp.data.value.uploadUrl;
     const docUrn = initResp.data.value.document; // e.g. urn:li:document:123...

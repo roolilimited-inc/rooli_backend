@@ -1101,6 +1101,7 @@ enum PublishStatus {
   SCHEDULED
   SUCCESS
   FAILED
+  PARTIAL
 }
 
 enum ApprovalStatus {

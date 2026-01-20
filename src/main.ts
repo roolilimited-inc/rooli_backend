@@ -2,7 +2,7 @@ import { HttpAdapterHost, NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 import { BadRequestException, ValidationPipe, VersioningType } from '@nestjs/common';
 import { SwaggerModule } from '@nestjs/swagger';
-import { swaggerConfig } from './config/swagger.config';
+import { swaggerConfig } from './common/config/swagger.config';
 import { PrismaExceptionFilter } from './common/filters/prisma-exception.filter';
 import { BullBoardModule } from './common/bull-boad/bull-board.module';
 import { AllExceptionsFilter } from './common/filters/all-exception-filter.filter';

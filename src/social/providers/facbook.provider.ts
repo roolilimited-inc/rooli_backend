@@ -133,6 +133,9 @@ export class FacebookProvider implements ISocialProvider {
       access_token: token,
     });
 
+    console.log('Facebook Carousel Post Response:');
+    console.log(response.data);
+
     return this.formatResult(response.data.id, pageId);
   }
 
@@ -152,6 +155,9 @@ export class FacebookProvider implements ISocialProvider {
       access_token: token,
     });
 
+     console.log('Facebook single Photo Response:');
+    console.log(response.data);
+
     return this.formatResult(response.data.post_id || response.data.id, pageId);
   }
 
@@ -164,6 +170,9 @@ export class FacebookProvider implements ISocialProvider {
       message: message,
       access_token: token,
     });
+
+     console.log('Facebook Text Post Response:');
+    console.log(response.data);
 
     return this.formatResult(response.data.id, pageId);
   }
@@ -183,6 +192,9 @@ export class FacebookProvider implements ISocialProvider {
       upload_phase: 'start',
       access_token: token,
     });
+
+    console.log('Facebook Reel Upload Response:');
+    console.log(response.data);
 
     const videoId = response.data.video_id;
 
@@ -212,6 +224,9 @@ export class FacebookProvider implements ISocialProvider {
       access_token: token,
     });
 
+    console.log('Facebook Photo Story Response:');
+    console.log(response.data);
+
     return {
       platformPostId: response.data.post_id || response.data.id,
       url: `https://facebook.com/${pageId}`, // Stories don't have permanent public URLs
@@ -226,6 +241,9 @@ export class FacebookProvider implements ISocialProvider {
       published: true,
       access_token: token,
     });
+
+    console.log('Facebook Video Story Response:');
+    console.log(response.data);
 
     return {
       platformPostId: response.data.post_id || response.data.id,

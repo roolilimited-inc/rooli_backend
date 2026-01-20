@@ -154,6 +154,9 @@ export class InstagramProvider implements ISocialProvider {
     this.logger.log(`Creating IG Container (Target: ${targetType}, Video: ${isVideo})...`);
     
     const response = await axios.post(url, body);
+
+    console.log('Instagram Create Container Response:');
+    console.log(response.data);
     const containerId = response.data.id;
 
     // 🛑 CRITICAL: Wait for Video Processing
@@ -194,6 +197,10 @@ export class InstagramProvider implements ISocialProvider {
       caption: caption,
       access_token: token,
     });
+
+        console.log('Instagram publish carousel Response:');
+    console.log(response.data);
+
     
     const parentContainerId = response.data.id;
 
@@ -213,6 +220,9 @@ export class InstagramProvider implements ISocialProvider {
       creation_id: containerId,
       access_token: token,
     });
+
+    console.log('Instagram Publish Container Response:');
+    console.log(response.data);
 
     return {
       platformPostId: response.data.id,

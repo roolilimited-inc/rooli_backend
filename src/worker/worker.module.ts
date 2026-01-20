@@ -7,6 +7,7 @@ import { MediaIngestProcessor } from './processors/media-ingest.processor';
 import { PublishingProcessor } from './processors/publishing.processor';
 import { PublishingScheduler } from './schedulers/publishing.scheduler';
 import { SocialModule } from '@/social/social.module';
+import { EncryptionService } from '@/common/utility/encryption.service';
 
 @Module({
   imports: [
@@ -50,6 +51,6 @@ import { SocialModule } from '@/social/social.module';
   ],
   controllers: [WorkerController],
   providers: [WorkerService, MediaIngestProcessor, PublishingScheduler, 
-    PublishingProcessor,],
+    PublishingProcessor, EncryptionService],
 })
 export class WorkerModule {}

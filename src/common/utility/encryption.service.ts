@@ -21,6 +21,7 @@ export class EncryptionService {
   }
 
   async encrypt(plaintext: string): Promise<string> {
+    console.log('Encrypting data:', plaintext);
     const iv = crypto.randomBytes(this.ivLength);
     const cipher = crypto.createCipheriv(this.algorithm, this.key, iv);
 
@@ -30,23 +31,35 @@ export class EncryptionService {
 
     // Combine IV + AuthTag + Ciphertext
     const combined = Buffer.concat([iv, authTag, encrypted]);
+    console.log('Encrypted data:', combined.toString('base64'));
     return combined.toString('base64');
   }
 
   async decrypt(encryptedData: string): Promise<string> {
-    const combined = Buffer.from(encryptedData, 'base64');
+    try {
+      console.log('Decrypting data:', encryptedData);
+      const combined = Buffer.from(encryptedData, 'base64');
 
-    const iv = combined.slice(0, this.ivLength);
-    const authTag = combined.slice(this.ivLength, this.ivLength + this.tagLength);
-    const encrypted = combined.slice(this.ivLength + this.tagLength);
+      const iv = combined.slice(0, this.ivLength);
+      const authTag = combined.slice(
+        this.ivLength,
+        this.ivLength + this.tagLength,
+      );
+      const encrypted = combined.slice(this.ivLength + this.tagLength);
 
-    const decipher = crypto.createDecipheriv(this.algorithm, this.key, iv);
-    decipher.setAuthTag(authTag);
+      const decipher = crypto.createDecipheriv(this.algorithm, this.key, iv);
+      decipher.setAuthTag(authTag);
 
-    let decrypted = decipher.update(encrypted);
-    decrypted = Buffer.concat([decrypted, decipher.final()]);
+      let decrypted = decipher.update(encrypted);
+      decrypted = Buffer.concat([decrypted, decipher.final()]);
 
-    return decrypted.toString('utf8');
+      console.log('Decrypted data:', decrypted.toString('utf8'));
+
+      return decrypted.toString('utf8');
+    } catch (error) {
+      console.error(error);
+      throw new Error('Decryption failed');
+    }
   }
 
   hash(data: string): string {
@@ -61,7 +74,11 @@ export class EncryptionService {
     return crypto.createHmac('sha256', secret).update(data).digest('hex');
   }
 
-  verifyHmacSignature(data: string, signature: string, secret: string): boolean {
+  verifyHmacSignature(
+    data: string,
+    signature: string,
+    secret: string,
+  ): boolean {
     const expected = this.createHmacSignature(data, secret);
     return crypto.timingSafeEqual(
       Buffer.from(signature, 'hex'),

@@ -86,6 +86,7 @@ export class SocialConnectionService {
       if (cached) organizationId = JSON.parse(cached).organizationId;
 
       authData = await this.twitter.login(token, verifier);
+      console.log(authData)
     } else {
       const { code, state } = query;
 

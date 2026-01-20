@@ -11,7 +11,10 @@ import * as path from 'path';
 import * as os from 'os';
 import { pipeline } from 'stream/promises';
 import { randomUUID } from 'crypto';
-import { ISocialProvider, SocialCredentials } from '../interfaces/social-provider.interface';
+import {
+  ISocialProvider,
+  SocialCredentials,
+} from '../interfaces/social-provider.interface';
 
 @Injectable()
 export class TwitterProvider implements ISocialProvider {
@@ -26,24 +29,29 @@ export class TwitterProvider implements ISocialProvider {
     metadata?: { replyToPostId?: string },
   ) {
     const client = new TwitterApi({
-      appKey: this.configService.get<string>('TWITTER_API_KEY'),
-      appSecret: this.configService.get<string>('TWITTER_API_SECRET'),
+      appKey: this.configService.getOrThrow('TWITTER_API_KEY'),
+      appSecret: this.configService.getOrThrow('TWITTER_API_SECRET'),
       accessToken: credentials.accessToken,
       accessSecret: credentials.refreshToken,
     });
 
-    const rwClient = client.readWrite;
+    console.log('Twitter credentials:');
+    console.log(credentials);
+
+    console.log('Initialized Twitter client');
 
     try {
       const mediaIds: string[] = [];
 
       if (mediaFiles.length > 0) {
-        this.logger.log(`Processing ${mediaFiles.length} media file(s) for Twitter`);
+        this.logger.log(
+          `Processing ${mediaFiles.length} media file(s) for Twitter`,
+        );
 
         // Sequential is best for temporary file handling
         for (const file of mediaFiles) {
           const mediaId = await this.uploadMediaViaTempFile(
-            rwClient,
+            client,
             file.url,
             file.mimeType,
           );
@@ -64,7 +72,9 @@ export class TwitterProvider implements ISocialProvider {
       }
 
       this.logger.log('Publishing tweet...');
-      const response = await rwClient.v2.tweet(payload);
+      const response = await client.v2.tweet(payload);
+
+      console.log('Tweet published successfully:', response);
 
       return {
         platformPostId: response.data.id,
@@ -73,9 +83,7 @@ export class TwitterProvider implements ISocialProvider {
     } catch (error) {
       this.logger.error('Twitter publish failed', error);
       const message =
-        error?.data?.detail ||
-        error?.message ||
-        'Unknown Twitter error';
+        error?.data?.detail || error?.message || 'Unknown Twitter error';
       throw new InternalServerErrorException(`Twitter Error: ${message}`);
     }
   }
@@ -91,7 +99,10 @@ export class TwitterProvider implements ISocialProvider {
     // 1. Create a Temp File Path
     const tmpDir = os.tmpdir();
     const ext = this.getExtension(mimeType);
-    const tempFilePath = path.join(tmpDir, `rooli-upload-${randomUUID()}.${ext}`);
+    const tempFilePath = path.join(
+      tmpDir,
+      `rooli-upload-${randomUUID()}.${ext}`,
+    );
 
     try {
       this.logger.log(`Streaming to temp file: ${tempFilePath}`);
@@ -117,17 +128,22 @@ export class TwitterProvider implements ISocialProvider {
 
       this.logger.log(`Uploading from disk to Twitter (type=${type})`);
 
+      console.log(
+        `Uploading media file: ${tempFilePath} with mimeType: ${mimeType}`,
+      );
+
       // 4. Upload from Disk
-      // The library is happy because it gets a file path. 
+      // The library is happy because it gets a file path.
       // It handles reading the file size and chunking automatically.
       const mediaId = await client.v1.uploadMedia(tempFilePath, {
         mimeType,
-        type, 
         target: 'tweet',
       });
 
-      return mediaId;
+      console.log('Uploaded media ID:');
+      console.log(mediaId);
 
+      return mediaId;
     } catch (error) {
       this.logger.error(`Media upload failed: ${url}`, error);
       throw error;
@@ -139,7 +155,10 @@ export class TwitterProvider implements ISocialProvider {
           this.logger.debug(`Cleaned up temp file: ${tempFilePath}`);
         }
       } catch (cleanupError) {
-        this.logger.warn(`Failed to cleanup temp file: ${tempFilePath}`, cleanupError);
+        this.logger.warn(
+          `Failed to cleanup temp file: ${tempFilePath}`,
+          cleanupError,
+        );
       }
     }
   }
