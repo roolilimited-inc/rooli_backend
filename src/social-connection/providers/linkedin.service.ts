@@ -34,7 +34,7 @@ export class LinkedInService {
     const params = new URLSearchParams({
       response_type: 'code',
       client_id: this.config.get('LINKEDIN_CLIENT_ID'),
-      redirect_uri: `${this.config.get('API_URL')}/api/v1/social-connections/callback/linkedin`,
+      redirect_uri:this.config.get('LINKEDIN_REDIRECT_URI') ,
       state: state,
       scope: scopes,
     });
