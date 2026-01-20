@@ -5,17 +5,23 @@ import Redis from 'ioredis';
 
 @Global()
 @Module({
-  controllers: [RedisController],
   providers: [
     RedisService,
-
     {
       provide: 'REDIS_CLIENT',
       useFactory: () => {
-        if (process.env.REDIS_URL) {
-          console.log('🚀 Connecting to Cloud Redis...');
-          return new Redis(process.env.REDIS_URL, {
-            tls: { rejectUnauthorized: false },
+        const redisUrl = process.env.REDIS_URL;
+
+        if (redisUrl) {
+          console.log(`🚀 Connecting to Redis at ${redisUrl.split('@')[1]}...`);
+          
+          // CHECK: Does the URL strictly indicate a secure connection?
+          const isTls = redisUrl.startsWith('rediss://');
+
+          return new Redis(redisUrl, {
+            // Only apply TLS options if the URL is actually secure (rediss://)
+            // Render Internal URLs (redis://) do NOT support TLS.
+            ...(isTls ? { tls: { rejectUnauthorized: false } } : {}),
           });
         }
 
@@ -27,7 +33,6 @@ import Redis from 'ioredis';
       },
     },
   ],
-  // 2. NOW you can export it
   exports: [RedisService, 'REDIS_CLIENT'],
 })
 export class RedisModule {}
