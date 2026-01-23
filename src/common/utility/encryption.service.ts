@@ -21,42 +21,32 @@ export class EncryptionService {
   }
 
   async encrypt(plaintext: string): Promise<string> {
-    const iv = crypto.randomBytes(this.ivLength);
-    const cipher = crypto.createCipheriv(this.algorithm, this.key, iv);
+  const iv = crypto.randomBytes(this.ivLength);
+  const cipher = crypto.createCipheriv(this.algorithm, this.key, iv);
 
-    let encrypted = cipher.update(plaintext, 'utf8');
-    encrypted = Buffer.concat([encrypted, cipher.final()]);
-    const authTag = cipher.getAuthTag();
+  const encrypted = Buffer.concat([cipher.update(plaintext, 'utf8'), cipher.final()]);
+  const authTag = cipher.getAuthTag();
 
-    // Combine IV + AuthTag + Ciphertext
-    const combined = Buffer.concat([iv, authTag, encrypted]);
-    return combined.toString('base64');
+  return Buffer.concat([iv, authTag, encrypted]).toString('base64url'); 
+}
+
+async decrypt(encryptedData: string): Promise<string> {
+  const combined = Buffer.from(encryptedData, 'base64url'); 
+
+  if (combined.length < this.ivLength + this.tagLength + 1) {
+    throw new Error('Ciphertext too short / corrupted');
   }
 
-  async decrypt(encryptedData: string): Promise<string> {
-    try {
-      const combined = Buffer.from(encryptedData, 'base64');
+  const iv = combined.subarray(0, this.ivLength);
+  const authTag = combined.subarray(this.ivLength, this.ivLength + this.tagLength);
+  const encrypted = combined.subarray(this.ivLength + this.tagLength);
 
-      const iv = combined.slice(0, this.ivLength);
-      const authTag = combined.slice(
-        this.ivLength,
-        this.ivLength + this.tagLength,
-      );
-      const encrypted = combined.slice(this.ivLength + this.tagLength);
+  const decipher = crypto.createDecipheriv(this.algorithm, this.key, iv);
+  decipher.setAuthTag(authTag);
 
-      const decipher = crypto.createDecipheriv(this.algorithm, this.key, iv);
-      decipher.setAuthTag(authTag);
+  return Buffer.concat([decipher.update(encrypted), decipher.final()]).toString('utf8');
+}
 
-      let decrypted = decipher.update(encrypted);
-      decrypted = Buffer.concat([decrypted, decipher.final()]);
-
-
-      return decrypted.toString('utf8');
-    } catch (error) {
-      console.error(error);
-      throw new Error('Decryption failed');
-    }
-  }
 
   hash(data: string): string {
     return crypto.createHash('sha256').update(data).digest('hex');
