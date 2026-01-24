@@ -142,7 +142,6 @@ export class LinkedInService {
         }),
       );
 
-      console.log('LinkedIn User Profile Data:', data);
       let pictureUrl = null;
       if (data.profilePicture?.['displayImage~']?.elements?.length > 0) {
         const elements = data.profilePicture['displayImage~'].elements;

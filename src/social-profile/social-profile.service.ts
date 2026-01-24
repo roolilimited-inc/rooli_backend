@@ -44,7 +44,6 @@ export class SocialProfileService {
       dto.connectionId,
     );
 
-    console.log(importablePages);
 
     const results = {
       success: [],

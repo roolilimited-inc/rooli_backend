@@ -52,7 +52,6 @@ export class PublishingProcessor extends WorkerHost {
         },
       });
 
-      console.log(post);
 
       if (!post) return;
 
@@ -122,7 +121,6 @@ export class PublishingProcessor extends WorkerHost {
               ? { accessToken: rawAccessToken!, accessSecret: rawAccessSecret! }
               : { accessToken: rawAccessToken! };
 
-              console.log('Publishing to', platform, 'with credentials', credentials);
           const result = await provider.publish(
             credentials as any,
             dest.contentOverride || post.content,
@@ -133,7 +131,6 @@ export class PublishingProcessor extends WorkerHost {
               postType: post.contentType,
             },
           );
-          console.log('Publishing result:', result);
 
           return {
             destinationId: dest.id,

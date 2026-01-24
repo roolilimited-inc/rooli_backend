@@ -1,150 +1,430 @@
 import { Platform } from '@generated/enums';
 import { Injectable, BadRequestException } from '@nestjs/common';
 import * as twitter from 'twitter-text';
-
+import { MediaItem, IgPostKind } from '../interfaces/post.interface';
 
 export interface ValidationResult {
   isValid: boolean;
-  finalContent: string;        // The content for the main post
-  threadChain?: string[];      // Extra parts (for Twitter auto-threading)
+  finalContent: string; // The content for the main post
+  threadChain?: string[]; // Extra parts (for Twitter auto-threading)
 }
 @Injectable()
 export class PlatformRulesService {
-  private readonly X_CHAR_LIMIT = 280;
+  // -----------------------
+  // X / Twitter
+  // -----------------------
   private readonly X_MAX_MEDIA = 4;
+  private readonly X_MAX_THREAD_TWEETS = 20; // ✅ prevent insane threads
+  private readonly X_SAFE_LIMIT = 260;
+
+  // -----------------------
+  // LinkedIn
+  // -----------------------
   private readonly LINKEDIN_CHAR_LIMIT = 3000;
+  private readonly LINKEDIN_MAX_IMAGES = 9;
+  private readonly LINKEDIN_MAX_IMAGE_DIMENSION = 6012;
+
+  // -----------------------
+  // Instagram
+  // -----------------------
   private readonly IG_CAPTION_LIMIT = 2200;
   private readonly IG_HASHTAG_LIMIT = 30;
+  private readonly IG_CAROUSEL_MAX = 10;
 
- public validateAndTransform(
+  /**
+   * ✅ 2) Strict platform handling: no silent defaults
+   * ✅ 3) Keep media typed and optional
+   */
+  public validateAndTransform(
     content: string,
-    platform: string, // Use string or Enum
-    media: any[] = []
+    platform: Platform,
+    media: MediaItem[] = [],
+    options?: { igKind?: IgPostKind },
   ): ValidationResult {
+    const safeContent = (content ?? '').trim();
+
     switch (platform) {
-      case 'TWITTER': return this.processTwitter(content, media);
-      case 'LINKEDIN': return this.processLinkedIn(content, media);
-      case 'FACEBOOK': return this.processFacebook(content, media);
-      case 'INSTAGRAM': return this.processInstagram(content, media);
-      default: return { isValid: true, finalContent: content };
+      case Platform.TWITTER:
+        return this.processTwitter(safeContent, media);
+
+      case Platform.LINKEDIN:
+        return this.processLinkedIn(safeContent, media);
+
+      case Platform.FACEBOOK:
+        return this.processFacebook(safeContent, media);
+
+      case Platform.INSTAGRAM:
+        return this.processInstagram(
+          safeContent,
+          media,
+          options?.igKind ?? 'FEED',
+        );
+
+      default:
+        // (Enum makes this unreachable, but keeps runtime safe)
+        throw new BadRequestException(`Unsupported platform: ${platform}`);
     }
   }
 
- private processTwitter(content: string, media: any[]): ValidationResult {
-    if (media.length > 4) throw new BadRequestException('Twitter max 4 images.');
+  // ===========================================================================
+  // X / Twitter
+  // ===========================================================================
+  /**
+   * ✅ Uses twitter-text parseTweet (correct counting)
+   * ✅ Thread splitting:
+   *   - prevents empty chunks
+   *   - handles unbreakable long words
+   *   - validates AFTER numbering
+   *   - caps max tweets
+   * ✅ Media policy:
+   *   - allow up to 4 media TOTAL (assumes you attach to first tweet only)
+   */
+  private processTwitter(
+    content: string,
+    media: MediaItem[],
+  ): ValidationResult {
+    if (media.length > this.X_MAX_MEDIA) {
+      throw new BadRequestException(
+        `X allows max ${this.X_MAX_MEDIA} media items per tweet.`,
+      );
+    }
 
-    const parse = twitter.parseTweet(content);
-    
-    // Case A: Fits in one tweet
-    if (parse.valid) {
+    if (twitter.parseTweet(content).valid) {
       return { isValid: true, finalContent: content };
     }
 
-    // Case B: Needs Splitting (Simple logic)
-    // NOTE: In production, use a sentence splitter library
-    const chunks: string[] = [];
-    const words = content.split(' ');
-    let buffer = '';
-
-    for (const word of words) {
-      const candidate = buffer ? `${buffer} ${word}` : word;
-      if (twitter.parseTweet(candidate).valid) {
-        buffer = candidate;
-      } else {
-        chunks.push(buffer);
-        buffer = word;
-      }
-    }
-    if (buffer) chunks.push(buffer);
-
-    // Numbering (1/3)
-    const total = chunks.length;
-    const finalChunks = chunks.map((c, i) => `${c} (${i + 1}/${total})`);
+    // ✅ Keep splitting until numbering no longer breaks validity
+    const numbered = this.splitNumberAndStabilizeX(content);
 
     return {
       isValid: true,
-      finalContent: finalChunks[0],      // First Tweet
-      threadChain: finalChunks.slice(1), // Remaining Tweets
+      finalContent: numbered[0],
+      threadChain: numbered.slice(1),
     };
   }
 
+  private splitNumberAndStabilizeX(content: string): string[] {
+    let safeLimit = this.X_SAFE_LIMIT; // e.g. 260
+    let lastTweetCount = -1;
+
+    for (let attempt = 0; attempt < 10; attempt++) {
+      const rawChunks = this.splitForXByWeightedLimit(content, safeLimit);
+
+      if (rawChunks.length > this.X_MAX_THREAD_TWEETS) {
+        throw new BadRequestException(
+          `Content too long. Would require ${rawChunks.length} tweets (max ${this.X_MAX_THREAD_TWEETS}).`,
+        );
+      }
+
+      const numbered = this.numberXThread(rawChunks);
+
+      const allValid = numbered.every((t) => twitter.parseTweet(t).valid);
+
+      // ✅ Stable: valid and tweet count not increasing forever
+      if (allValid) return numbered;
+
+      // If count exploded or we’re not converging, tighten limit
+      if (rawChunks.length === lastTweetCount) {
+        safeLimit -= 5; // small tightening
+      } else {
+        safeLimit -= 8; // bigger tightening when tweet count changes
+      }
+
+      if (safeLimit < 200) {
+        throw new BadRequestException(
+          'Cannot split content into valid tweets. Please shorten text.',
+        );
+      }
+
+      lastTweetCount = rawChunks.length;
+    }
+
+    throw new BadRequestException(
+      'Unable to stabilize thread splitting for X.',
+    );
+  }
+
+  /**
+   * ✅ Uses weightedLength (twitter-text) and preserves whitespace exactly.
+   * This is your current splitForX, but parameterized by limit.
+   */
+  private splitForXByWeightedLimit(content: string, limit: number): string[] {
+    const tokens = content.split(/(\s+)/);
+    const chunks: string[] = [];
+    let buffer = '';
+
+    for (const token of tokens) {
+      const candidate = buffer + token;
+      const len = twitter.parseTweet(candidate).weightedLength;
+
+      if (len <= limit) {
+        buffer = candidate;
+        continue;
+      }
+
+      // Token itself too big -> hard split
+      if (twitter.parseTweet(token).weightedLength > limit) {
+        if (buffer) {
+          chunks.push(buffer);
+          buffer = '';
+        }
+        chunks.push(...this.hardSplitTokenForX(token));
+        continue;
+      }
+
+      // Normal split
+      if (buffer) chunks.push(buffer);
+      buffer = token;
+    }
+
+    if (buffer) chunks.push(buffer);
+
+    return chunks.filter((c) => c.trim().length > 0);
+  }
+
+  /**
+   * Hard-split a token that has no spaces and is too long.
+   * This is a last resort. You can also choose to reject instead.
+   */
+  private hardSplitTokenForX(token: string): string[] {
+    const parts: string[] = [];
+    let start = 0;
+
+    // naive approach: grow until invalid, then cut
+    while (start < token.length) {
+      let end = Math.min(token.length, start + 280); // upper bound; real counting handled below
+      let slice = token.slice(start, end);
+
+      // shrink until valid
+      while (slice.length > 0 && !twitter.parseTweet(slice).valid) {
+        end--;
+        slice = token.slice(start, end);
+      }
+
+      if (!slice) {
+        throw new BadRequestException(
+          `Cannot split content for X. A token is too long to fit.`,
+        );
+      }
+
+      parts.push(slice);
+      start = end;
+    }
+
+    return parts;
+  }
+
+  private numberXThread(chunks: string[]): string[] {
+    const total = chunks.length;
+    return chunks.map((c, i) => `${c} (${i + 1}/${total})`);
+  }
+
+  // ===========================================================================
+  // Instagram
+  // ===========================================================================
+  /**
+   * ✅ Separates FEED vs REEL constraints
+   * ✅ Uses ratio ranges for FEED (real-world safe)
+   * ✅ Validates media types
+   */
   private processInstagram(
     content: string,
-    media: { width?: number; height?: number }[],
-  ) {
-    // 1. Content Limits
+    media: MediaItem[],
+    kind: IgPostKind,
+  ): ValidationResult {
     if (content.length > this.IG_CAPTION_LIMIT) {
-      throw new Error(`Caption exceeds ${this.IG_CAPTION_LIMIT} characters.`);
+      throw new BadRequestException(
+        `Caption exceeds ${this.IG_CAPTION_LIMIT} characters.`,
+      );
     }
 
-    // 2. Efficient Hashtag Counting
-    // Matches # followed by alphanumeric chars.
+    // Hashtags: keep your simple rule (English-oriented)
     const hashtagCount = (content.match(/#[a-z0-9_]+/gi) || []).length;
     if (hashtagCount > this.IG_HASHTAG_LIMIT) {
-      throw new Error(`Max ${this.IG_HASHTAG_LIMIT} hashtags allowed.`);
+      throw new BadRequestException(
+        `Max ${this.IG_HASHTAG_LIMIT} hashtags allowed.`,
+      );
     }
 
-    // 3. Media Requirements
     if (media.length === 0) {
-      throw new Error('Instagram requires at least 1 image or video.');
-    }
-    if (media.length > 10) {
-      throw new Error('Instagram Carousel allows max 10 items.');
+      throw new BadRequestException(
+        'Instagram requires at least 1 image or video.',
+      );
     }
 
-    // 4. Aspect Ratio Check (Floating Point Safe)
+    const hasPdf = media.some((m) => m.mimeType === 'application/pdf');
+    if (hasPdf) {
+      throw new BadRequestException('Instagram does not support PDF posts.');
+    }
+
+    const videoCount = media.filter((m) =>
+      m.mimeType?.startsWith('video/'),
+    ).length;
+    const imageCount = media.filter((m) =>
+      m.mimeType?.startsWith('image/'),
+    ).length;
+
+    if (videoCount + imageCount !== media.length) {
+      throw new BadRequestException(
+        'Instagram media must be image/* or video/*.',
+      );
+    }
+
+    if (kind === 'REEL') {
+      // Reels: usually one video
+      if (videoCount !== 1 || media.length !== 1) {
+        throw new BadRequestException('Reels require exactly 1 video.');
+      }
+
+      // Optional: ratio check for reels (allow small range)
+      this.validateIgRatios(media, { kind: 'REEL' });
+
+      return { isValid: true, finalContent: content };
+    }
+
+    // FEED
+    if (media.length > this.IG_CAROUSEL_MAX) {
+      throw new BadRequestException(
+        `Instagram carousel allows max ${this.IG_CAROUSEL_MAX} items.`,
+      );
+    }
+
+    this.validateIgRatios(media, { kind: 'FEED' });
+
+    return { isValid: true, finalContent: content };
+  }
+
+  /**
+   * ✅ FEED: ratio range 0.8 to 1.91 (width/height)
+   * ✅ REEL: near 9/16 with wider tolerance range
+   */
+  private validateIgRatios(media: MediaItem[], opts: { kind: IgPostKind }) {
     for (const m of media) {
-      if (!m.width || !m.height) continue; // Skip if metadata missing
+      if (!m.width || !m.height) continue; // metadata missing: skip
 
       const ratio = m.width / m.height;
 
-      // Instagram Ratios: Square (1:1), Portrait (4:5 -> 0.8), Landscape (1.91:1), Reel (9:16 -> 0.5625)
-      // Allow a small epsilon for rounding errors
-      const isSquare = Math.abs(ratio - 1) < 0.02;
-      const isPortrait = Math.abs(ratio - 0.8) < 0.02;
-      const isLandscape = Math.abs(ratio - 1.91) < 0.02;
-      const isReel = Math.abs(ratio - 9 / 16) < 0.02;
+      if (opts.kind === 'FEED') {
+        // Real-world safe: Instagram feed allows between 4:5 (0.8) and 1.91:1
+        if (ratio < 0.79 || ratio > 1.92) {
+          throw new BadRequestException(
+            `Invalid feed aspect ratio (${ratio.toFixed(2)}). Supported range: 0.80 to 1.91 (4:5 to 1.91:1).`,
+          );
+        }
+      } else {
+        // Reels: 9:16 ≈ 0.5625. Allow small range for encoders/crops.
+        if (ratio < 0.55 || ratio > 0.6) {
+          throw new BadRequestException(
+            `Invalid reel aspect ratio (${ratio.toFixed(2)}). Expected ~9:16.`,
+          );
+        }
+      }
+    }
+  }
 
-      if (!isSquare && !isPortrait && !isLandscape && !isReel) {
-        throw new Error(
-          `Invalid aspect ratio (${ratio.toFixed(2)}). Supported: 1:1, 4:5, 1.91:1, 9:16`,
+  // ===========================================================================
+  // Facebook
+  // ===========================================================================
+  /**
+   * ✅ Keep it permissive, but still validate what your publisher supports.
+   * (You can tighten this later based on your publishing method.)
+   */
+  private processFacebook(
+    content: string,
+    media: MediaItem[],
+  ): ValidationResult {
+    // Keep your policy; adjust if your API has different constraints
+    if (media.length > 10) {
+      throw new BadRequestException(
+        'Facebook allows max 10 media items per post (policy).',
+      );
+    }
+
+    // Basic mime-type sanity
+    for (const m of media) {
+      const ok =
+        m.mimeType?.startsWith('image/') || m.mimeType?.startsWith('video/');
+      if (!ok) {
+        throw new BadRequestException(
+          'Facebook media must be image/* or video/*.',
         );
       }
     }
+
     return { isValid: true, finalContent: content };
   }
 
-  private processFacebook(content: string, media: any[]) {
-    if (media.length > 10) {
-      throw new Error('Facebook allows max 10 photos/videos per post.');
-    }
-    return { isValid: true, finalContent: content };
-  }
-
-  private processLinkedIn(content: string, media: any[]) {
+  // ===========================================================================
+  // LinkedIn
+  // ===========================================================================
+  /**
+   * ✅ Consistent exceptions
+   * ✅ Validates mixing rules
+   * ✅ Enforces 1 PDF OR 1 video OR up to 9 images
+   */
+  private processLinkedIn(
+    content: string,
+    media: MediaItem[],
+  ): ValidationResult {
     if (content.length > this.LINKEDIN_CHAR_LIMIT) {
-      throw new Error(
+      throw new BadRequestException(
         `Text exceeds LinkedIn limit (${content.length}/${this.LINKEDIN_CHAR_LIMIT}).`,
       );
     }
-    if (media.length > 9) {
-      throw new Error('LinkedIn recommends max 9 images.');
-    }
-      // --- A. VALIDATION: Check counts ---
-      const videoCount = media.filter(f => f.mimeType.startsWith('video/')).length;
-      const imageCount = media.filter(f => f.mimeType.startsWith('image/')).length;
-      const docCount = media.filter(f => f.mimeType === 'application/pdf').length;
 
-      // Rule: Documents must be standalone
-      if (docCount > 0 && (videoCount > 0 || imageCount > 0)) {
-        throw new BadRequestException('LinkedIn Documents (PDFs) cannot be mixed with images or videos.');
+    const videoCount = media.filter((f) =>
+      f.mimeType?.startsWith('video/'),
+    ).length;
+    const imageCount = media.filter((f) =>
+      f.mimeType?.startsWith('image/'),
+    ).length;
+    const docCount = media.filter(
+      (f) => f.mimeType === 'application/pdf',
+    ).length;
+
+    if (videoCount + imageCount + docCount !== media.length) {
+      throw new BadRequestException(
+        'LinkedIn media must be image/*, video/*, or application/pdf.',
+      );
+    }
+
+    // Documents must be standalone
+    if (docCount > 0 && (videoCount > 0 || imageCount > 0)) {
+      throw new BadRequestException(
+        'LinkedIn PDF posts cannot be mixed with images or videos.',
+      );
+    }
+
+    if (docCount > 1) {
+      throw new BadRequestException('LinkedIn allows only 1 PDF per post.');
+    }
+
+    if (videoCount > 1) {
+      throw new BadRequestException('LinkedIn allows only 1 video per post.');
+    }
+
+    if (imageCount > this.LINKEDIN_MAX_IMAGES) {
+      throw new BadRequestException(
+        `LinkedIn allows max ${this.LINKEDIN_MAX_IMAGES} images.`,
+      );
+    }
+
+    for (const m of media) {
+      if (!m.mimeType?.startsWith('image/')) continue;
+
+      if (!m.width || !m.height) continue; // metadata missing → skip or enforce if you prefer
+
+      if (
+        m.width > this.LINKEDIN_MAX_IMAGE_DIMENSION ||
+        m.height > this.LINKEDIN_MAX_IMAGE_DIMENSION
+      ) {
+        throw new BadRequestException(
+          `LinkedIn image too large (${m.width}×${m.height}). ` +
+            `Max allowed is ${this.LINKEDIN_MAX_IMAGE_DIMENSION}×${this.LINKEDIN_MAX_IMAGE_DIMENSION}px.`,
+        );
       }
-      if (docCount > 1) {
-        throw new BadRequestException('LinkedIn allows only 1 Document (PDF) per post.');
-      }
-      if (videoCount > 1) {
-        throw new BadRequestException('LinkedIn allows only 1 Video per post.');
-      }
+    }
+
     return { isValid: true, finalContent: content };
   }
 }

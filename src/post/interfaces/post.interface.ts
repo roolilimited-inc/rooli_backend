@@ -23,3 +23,13 @@ export interface PreparedPost {
   mediaUrl?: string;
   postId?: string;
 }
+
+export type IgPostKind = 'FEED' | 'REEL';
+
+export interface MediaItem {
+  mimeType: string; // e.g. "image/jpeg", "video/mp4", "application/pdf"
+  width?: number;
+  height?: number;
+  sizeBytes?: number;
+  durationSec?: number;
+}

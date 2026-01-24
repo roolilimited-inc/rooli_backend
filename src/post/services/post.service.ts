@@ -1,5 +1,5 @@
 import { PrismaService } from '@/prisma/prisma.service';
-import { PostStatus, User } from '@generated/client';
+import { PostStatus, Prisma, User } from '@generated/client';
 import {
   BadRequestException,
   ForbiddenException,
@@ -29,128 +29,34 @@ export class PostService {
     private queueService: QueueService,
   ) {}
 
-  async createPost(user: any, workspaceId: string, dto: CreatePostDto) {
-    // 1. Basic Validation (Fail fast)
+async createPost(user: any, workspaceId: string, dto: CreatePostDto) {
+    // 1. Validate & Resolve Metadata (Time, Status, Payloads)
     this.validateFeatures(user, dto);
+    
+    const { finalScheduledAt, status } = await this.resolveScheduleAndStatus(workspaceId, dto);
 
-    // ---------------------------------------------------------
-    // TIMEZONE CONVERSION
-    // ---------------------------------------------------------
-    let finalScheduledAt: Date | null = null;
+    const payloads = await this.destinationBuilder.preparePayloads(workspaceId, dto);
 
-    if (dto.scheduledAt) {
-      // A. Check if user sent a Timezone AND a non-UTC string (no 'Z' at end)
-      if (dto.timezone && !dto.scheduledAt.endsWith('Z')) {
-        try {
-          // Convert "12:30 Lagos" -> "11:30 UTC" Date Object
-          finalScheduledAt = fromZonedTime(dto.scheduledAt, dto.timezone);
-        } catch (error) {
-          throw new BadRequestException('Invalid timezone or date format.');
-        }
-      } else {
-        // B. Fallback: User sent UTC (ends in Z) or didn't send timezone
-        finalScheduledAt = new Date(dto.scheduledAt);
-      }
-    }
-
-    // ---------------------------------------------------------
-    // 🕰️ HANDLE AUTO-SCHEDULE (Overwrites manual time)
-    // ---------------------------------------------------------
-    if (dto.isAutoSchedule) {
-      finalScheduledAt =
-        await this.queueService.getNextAvailableSlot(workspaceId);
-    }
-
-    // ---------------------------------------------------------
-    // 🛑 DATE VALIDATION (Must be checked AFTER conversion)
-    // ---------------------------------------------------------
-    if (finalScheduledAt) {
-      const now = new Date();
-      const fiveMinutesAgo = subMinutes(now, 5);
-
-      // We compare the final UTC Date object against "Now" (UTC)
-      if (isBefore(finalScheduledAt, fiveMinutesAgo)) {
-        // Tip: Provide a helpful error message showing what the server saw
-        throw new BadRequestException(
-          `Scheduled time is in the past. (Server calculated: ${finalScheduledAt.toISOString()})`,
-        );
-      }
-    }
-    // 2. Heavy Lifting (Validation & Transformation)
-    // This runs OUTSIDE the transaction. If it fails (e.g., Twitter too long),
-    // we haven't touched the DB yet.
-    const payloads = await this.destinationBuilder.preparePayloads(
-      workspaceId,
-      dto,
-    );
-
-    // 3. Prepare Status (Updated Logic)
-    const status: PostStatus = dto.needsApproval
-      ? 'PENDING_APPROVAL'
-      : finalScheduledAt // Check our calculated variable
-        ? 'SCHEDULED'
-        : 'DRAFT';
-
-    // 4. Database Transaction (Fast & Safe)
+    // 2. Execute DB Transaction
     return this.prisma.$transaction(async (tx) => {
-      // A. Create Master Post
+      // A) The Root Post
       const post = await this.postFactory.createMasterPost(
         tx,
         user.userId,
         workspaceId,
         { ...dto, scheduledAt: finalScheduledAt?.toISOString() },
-        status, // Use the calculated status, not hardcoded 'SCHEDULED'
+        status,
       );
 
-      // B. Save Destinations (Using the pre-calculated payloads)
+      // B) Root Destinations
       await this.destinationBuilder.saveDestinations(tx, post.id, payloads);
 
-      // =========================================================
-      // 🧵 THREAD HANDLING (Strictly Twitter Only)
-      // =========================================================
+      // C) Materialize Threads (if applicable)
+      await this.handleTwitterThreads(tx, post, payloads, dto, status);
 
-      // 1. Filter payloads to find ONLY Twitter profiles
-      const twitterPayloads = payloads.filter((p) => p.platform === 'TWITTER');
-
-      // Only run this if we actually have Twitter profiles AND threads
-      if (twitterPayloads.length > 0 && dto.threads?.length > 0) {
-        let previousPostId = post.id;
-
-        for (const threadItem of dto.threads) {
-          // 2. Create the Thread Post
-          const threadPost = await this.postFactory.createThreadPost(
-            tx,
-            user.userId,
-            workspaceId,
-            previousPostId, // Link to previous tweet
-            threadItem,
-            status,
-            post.scheduledAt,
-            post.timezone,
-            dto.campaignId,
-          );
-
-          // 3. Save Destinations (Twitter Only)
-          await this.destinationBuilder.saveDestinations(
-            tx,
-            threadPost.id,
-            twitterPayloads, // Critical: Use the filtered list
-          );
-
-          // Move the pointer so the next thread attaches to this one
-          previousPostId = threadPost.id;
-        }
-      }
-
-      // C. Handle Approval
+      // D) Approval flow
       if (dto.needsApproval) {
-        await tx.postApproval.create({
-          data: {
-            postId: post.id,
-            requesterId: user.id,
-            status: 'PENDING',
-          },
-        });
+        await this.createApproval(tx, post.id, user.id);
       }
 
       return post;
@@ -711,5 +617,81 @@ export class PostService {
     });
   }
 
+  private async resolveScheduleAndStatus(workspaceId: string, dto: CreatePostDto) {
+    let finalScheduledAt: Date | null = null;
 
+    if (dto.isAutoSchedule) {
+      finalScheduledAt = await this.queueService.getNextAvailableSlot(workspaceId);
+    } else if (dto.scheduledAt) {
+      finalScheduledAt = dto.timezone && !dto.scheduledAt.endsWith('Z')
+        ? fromZonedTime(dto.scheduledAt, dto.timezone)
+        : new Date(dto.scheduledAt);
+
+      // Past date check
+      if (isBefore(finalScheduledAt, subMinutes(new Date(), 5))) {
+        throw new BadRequestException('Scheduled time is in the past.');
+      }
+    }
+
+    const status: PostStatus = dto.needsApproval
+      ? 'PENDING_APPROVAL'
+      : finalScheduledAt ? 'SCHEDULED' : 'DRAFT';
+
+    return { finalScheduledAt, status };
+  }
+
+  private async handleTwitterThreads(
+    tx: Prisma.TransactionClient,
+    rootPost: any,
+    payloads: any[],
+    dto: CreatePostDto,
+    status: PostStatus
+  ) {
+    const twitterPayloads = payloads.filter((p) => p.platform === 'TWITTER');
+    if (!twitterPayloads.length) return;
+
+    // Validate chain consistency across profiles
+    const chains = twitterPayloads
+      .map((p) => p.metadata?.threadChain)
+      .filter((c) => Array.isArray(c) && c.length);
+
+    if (chains.length > 1 && chains.some(c => JSON.stringify(c) !== JSON.stringify(chains[0]))) {
+      throw new BadRequestException('Twitter thread content differs across profiles.');
+    }
+
+    const chain = chains[0];
+    if (!chain) return;
+
+    // Materialize the chain
+    let previousPostId = rootPost.id;
+    const hasExplicitThreads = Array.isArray(dto.threads) && dto.threads.length > 0;
+
+    for (let i = 0; i < chain.length; i++) {
+      const mediaIds = hasExplicitThreads ? (dto.threads![i]?.mediaIds ?? []) : [];
+      
+      const threadPost = await this.postFactory.createThreadPost(
+        tx,
+        rootPost.authorId,
+        rootPost.workspaceId,
+        previousPostId,
+        { content: chain[i], mediaIds },
+        status,
+        rootPost.scheduledAt,
+        rootPost.timezone,
+        rootPost.campaignId,
+      );
+
+      await this.destinationBuilder.saveDestinations(tx, threadPost.id, 
+        twitterPayloads.map(p => ({ ...p, contentOverride: chain[i], metadata: Prisma.JsonNull }))
+      );
+
+      previousPostId = threadPost.id;
+    }
+  }
+
+  private async createApproval(tx: Prisma.TransactionClient, postId: string, userId: string) {
+    await tx.postApproval.create({
+      data: { postId, requesterId: userId, status: 'PENDING' },
+    });
+  }
 }
