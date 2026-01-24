@@ -148,7 +148,6 @@ export class UserService {
       },
     });
 
-    this.logger.log('Password changed successfully', { userId });
   }
 
   async deactivateMyAccount(userId: string): Promise<void> {
@@ -161,7 +160,6 @@ export class UserService {
         lastActiveAt: new Date(),
       },
     });
-    this.logger.log(`User account deactivated`, { userId });
   }
 
   private validatePasswordStrength(password: string): void {

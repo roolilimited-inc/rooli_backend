@@ -264,7 +264,6 @@ export class BillingService {
         paystackEmailToken: email_token,
       },
     });
-    this.logger.log(`Synced Paystack Subscription Details for ${org.name}`);
   }
 
   // ---------------------------------------------------------

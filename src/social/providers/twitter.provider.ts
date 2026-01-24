@@ -40,9 +40,6 @@ export class TwitterProvider implements ISocialProvider {
       const mediaIds: string[] = [];
 
       if (mediaFiles.length > 0) {
-        this.logger.log(
-          `Processing ${mediaFiles.length} media file(s) for Twitter`,
-        );
 
         // Sequential is best for temporary file handling
         for (const file of mediaFiles) {
@@ -66,8 +63,6 @@ export class TwitterProvider implements ISocialProvider {
           in_reply_to_tweet_id: metadata.replyToPostId,
         };
       }
-
-      this.logger.log('Publishing tweet...');
       const response = await client.v2.tweet(payload);
 
 
@@ -100,7 +95,6 @@ export class TwitterProvider implements ISocialProvider {
     );
 
     try {
-      this.logger.log(`Streaming to temp file: ${tempFilePath}`);
 
       // 2. Download Stream -> Disk
       const response = await axios.get(url, {
@@ -121,7 +115,6 @@ export class TwitterProvider implements ISocialProvider {
         type = 'tweet_gif';
       }
 
-      this.logger.log(`Uploading from disk to Twitter (type=${type})`);
 
       console.log(
         `Uploading media file: ${tempFilePath} with mimeType: ${mimeType}`,
@@ -145,7 +138,6 @@ export class TwitterProvider implements ISocialProvider {
       try {
         if (fs.existsSync(tempFilePath)) {
           fs.unlinkSync(tempFilePath);
-          this.logger.debug(`Cleaned up temp file: ${tempFilePath}`);
         }
       } catch (cleanupError) {
         this.logger.warn(

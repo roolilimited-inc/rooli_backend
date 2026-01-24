@@ -570,7 +570,6 @@ export class AuthService {
         data: { isEmailVerified: true },
       });
 
-      this.logger.log(`Email verified for user: ${user.email}`);
     } catch (error) {
       if (
         error?.name === 'JsonWebTokenError' ||
@@ -605,7 +604,6 @@ export class AuthService {
     // Send Email directly
     await this.emailService.sendPasswordResetEmail(user.email, token);
 
-    this.logger.log(`Password reset requested for: ${user.email}`);
   }
 
   async resetPassword(dto: ResetPassword): Promise<void> {
@@ -634,7 +632,6 @@ export class AuthService {
         },
       });
 
-      this.logger.log(`Password reset successful for user ID: ${userId}`);
     } catch (error) {
       if (
         error?.name === 'JsonWebTokenError' ||
@@ -656,7 +653,6 @@ export class AuthService {
         },
       });
 
-      this.logger.log(`User logged out: ${userId}`);
     } catch (err) {
       this.logger.error(err);
       throw err;
@@ -795,7 +791,6 @@ export class AuthService {
     // 3. Send Email
     await this.emailService.sendVerificationEmail(user.email, token);
     
-    this.logger.log(`Verification email resent to ${user.email}`);
   }
 
   private toSafeUser(user): SafeUser {

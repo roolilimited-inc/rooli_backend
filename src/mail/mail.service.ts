@@ -56,7 +56,6 @@ export class MailService {
         subject: subject,
         htmlbody: htmlBody,
       });
-      this.logger.log(`Email sent successfully to ${to}`);
     } catch (error) {
       this.logger.error('Error sending email via ZeptoMail', error);
       throw error

@@ -223,7 +223,6 @@ export class LinkedInProvider implements ISocialProvider {
     const tempFilePath = path.join(tmpDir, `rooli-vid-${randomUUID()}.mp4`);
 
     try {
-      this.logger.log(`Downloading video to temp for processing: ${file.url}`);
       const downloadStream = await axios.get(file.url, {
         responseType: 'stream',
       });
@@ -261,7 +260,6 @@ export class LinkedInProvider implements ISocialProvider {
       const videoUrn = initResp.data.value.video;
       const partEtags: string[] = [];
 
-      this.logger.log(`Uploading video in ${instructions.length} part(s)...`);
 
       // 3. Upload Each Part
       for (const instruction of instructions) {
@@ -306,7 +304,6 @@ export class LinkedInProvider implements ISocialProvider {
         },
       );
 
-      this.logger.log('Video upload finalized.');
       return videoUrn;
     } catch (error) {
       this.logger.error(`Video upload failed: ${file.url}`, error);
@@ -352,7 +349,6 @@ export class LinkedInProvider implements ISocialProvider {
     const docUrn = initResp.data.value.document; // e.g. urn:li:document:123...
 
     // 2. Stream Upload
-    this.logger.log(`Uploading PDF to LinkedIn: ${docUrn}`);
     const fileStream = await axios.get(file.url, { responseType: 'stream' });
 
     await axios.put(uploadUrl, fileStream.data, {
