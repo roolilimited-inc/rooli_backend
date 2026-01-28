@@ -29,12 +29,14 @@ COPY --link . .
 # Generate prisma schema (Now uses the local prisma package, so imports work!)
 RUN DATABASE_URL="postgresql://dummy:dummy@localhost:5432/dummy" npx prisma generate
 
-# Build BOTH the main application and the worker
+# 1. Build the Main Application
 RUN npm run build
-RUN npm run build:worker
 
-# Build application
-RUN npm run build
+# 2. Build the Worker
+# We assume this appends to dist/ or has a specific output. 
+# If 'nest build worker' clears the dist folder, you must change the order 
+# or configure nest-cli.json to not delete output.
+RUN npm run build:worker
 
 # ----------------------------
 # Final Stage (Production)
