@@ -5,11 +5,9 @@ import { AppService } from './app.service';
 import { AuthModule } from './auth/auth.module';
 import { ConfigModule } from '@nestjs/config';
 import { ThrottlerModule } from '@nestjs/throttler';
-//import { ScheduleModule } from '@nestjs/schedule';
 import { MailModule } from './mail/mail.module';
 import { APP_GUARD } from '@nestjs/core';
 import { BillingModule } from './billing/billing.module';
-import { BullBoardModule } from './common/bull-boad/bull-board.module';
 import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
 import { OrganizationsModule } from './organizations/organizations.module';
 import { WebhookModule } from './webhook/webhook.module';
@@ -52,7 +50,7 @@ import { SocialModule } from './social/social.module';
 import { CampaignsModule } from './campaigns/campaigns.module';
 import { LabelsModule } from './labels/labels.module';
 import { AiModule } from './ai/ai.module';
-
+import { RooliBullBoardModule } from './common/bull-boad/bull-board.module';
 
 @Module({
   imports: [
@@ -69,12 +67,36 @@ import { AiModule } from './ai/ai.module';
       },
     ]),
 
-    // Task scheduling
-    //ScheduleModule.forRoot(),
+    BullModule.forRootAsync({
+      useFactory: () => {
+        if (process.env.REDIS_URL) {
+          const url = new URL(process.env.REDIS_URL);
+          const isTls = process.env.REDIS_URL.startsWith('rediss://');
+
+          return {
+            connection: {
+              host: url.hostname,
+              port: Number(url.port),
+              username: url.username || undefined,
+              password: url.password || undefined,
+              ...(isTls ? { tls: { rejectUnauthorized: false } } : {}),
+            },
+          };
+        }
+
+        return {
+          connection: {
+            host: process.env.REDIS_HOST || 'localhost',
+            port: Number(process.env.REDIS_PORT || 6379),
+            password: process.env.REDIS_PASSWORD || undefined,
+          },
+        };
+      },
+    }),
 
     MailModule,
 
-     RedisModule,
+    RedisModule,
 
     // PostsModule,
 
@@ -116,7 +138,7 @@ import { AiModule } from './ai/ai.module';
 
     // SocialSchedulerModule,
 
-    BullBoardModule,
+    RooliBullBoardModule,
 
     // AccessControlModule,
 

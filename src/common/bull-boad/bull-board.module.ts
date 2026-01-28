@@ -1,37 +1,30 @@
-import { Module, INestApplication, OnModuleInit, Inject } from '@nestjs/common';
-import { BullModule, getQueueToken } from '@nestjs/bullmq';
-import { createBullBoard } from '@bull-board/api';
+import { Module } from '@nestjs/common';
+import { BullBoardModule } from '@bull-board/nestjs';
 import { BullMQAdapter } from '@bull-board/api/bullMQAdapter';
+import { WorkerModule } from '@/worker/worker.module';
 import { ExpressAdapter } from '@bull-board/express';
-import { Queue } from 'bullmq';
 
 @Module({
   imports: [
-    BullModule.registerQueue({
-      name: 'social-posting',
+
+    WorkerModule,
+
+    BullBoardModule.forRoot({
+     route: '/admin/queues', 
+      adapter: ExpressAdapter,
+      // optional basic auth:
+      // username: process.env.BULLBOARD_USER,
+      // password: process.env.BULLBOARD_PASS,
     }),
+
+    BullBoardModule.forFeature({
+      name: 'media-ingest',
+      adapter: BullMQAdapter,
+    }),
+    BullBoardModule.forFeature({
+      name: 'publishing-queue',
+      adapter: BullMQAdapter,
+    })
   ],
 })
-export class BullBoardModule implements OnModuleInit {
-  private serverAdapter = new ExpressAdapter();
-  private readonly basePath = '/admin/queues';
-
-  constructor(
-    @Inject(getQueueToken('social-posting'))
-    private readonly socialPostingQueue: Queue,
-  ) {}
-
-  onModuleInit() {
-    this.serverAdapter.setBasePath(this.basePath);
-
-    createBullBoard({
-      queues: [new BullMQAdapter(this.socialPostingQueue)],
-      serverAdapter: this.serverAdapter,
-    });
-  }
-
-  public mount(app: INestApplication) {
-    app.use(this.basePath, this.serverAdapter.getRouter());
-  }
-}
-
+export class RooliBullBoardModule {}

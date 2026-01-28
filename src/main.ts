@@ -4,7 +4,6 @@ import { BadRequestException, ValidationPipe, VersioningType } from '@nestjs/com
 import { SwaggerModule } from '@nestjs/swagger';
 import { swaggerConfig } from './common/config/swagger.config';
 import { PrismaExceptionFilter } from './common/filters/prisma-exception.filter';
-import { BullBoardModule } from './common/bull-boad/bull-board.module';
 import { AllExceptionsFilter } from './common/filters/all-exception-filter.filter';
 import { TransformInterceptor } from './common/interceptors/transform.interceptor';
 
@@ -25,9 +24,6 @@ app.enableCors({
     defaultVersion: '1',
   });
 
-  // Mount Bull Board outside global prefix/versioning
-  const bullBoardModule = app.get(BullBoardModule);
-  bullBoardModule.mount(app);
 
   const document = SwaggerModule.createDocument(app, swaggerConfig);
   SwaggerModule.setup('api/docs', app, document, {
