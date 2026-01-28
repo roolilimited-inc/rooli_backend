@@ -19,5 +19,16 @@
         }
       }
     ]
+  },
+  "projects": {
+    "worker": {
+      "type": "application",
+      "root": "",
+      "entryFile": "src/worker-entry",
+      "sourceRoot": "src",
+      "compilerOptions": {
+        "tsConfigPath": "tsconfig.build.json"
+      }
+    }
   }
 }
