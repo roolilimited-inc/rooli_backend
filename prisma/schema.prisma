@@ -338,7 +338,7 @@ model Post {
   
   // 📝 CONTENT
   // The "Master" content. Platform-specific versions live in PostDestination.
-  content         String      @db.Text 
+  content         String?      @db.Text 
   
   // 🖼️ MEDIA
   // We use a join table to ensure ORDER (Critical for Carousels)
@@ -1095,6 +1095,7 @@ enum PostStatus {
   PUBLISHING  // Currently uploading
   PUBLISHED
   FAILED
+  PARTIAL
 }
 
 enum PublishStatus {
@@ -1102,6 +1103,7 @@ enum PublishStatus {
   SUCCESS
   FAILED
   PARTIAL
+  PUBLISHING
 }
 
 enum ApprovalStatus {
