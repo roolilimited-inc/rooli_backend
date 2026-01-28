@@ -12,7 +12,8 @@ import { PublishPostProcessor } from './processors/publish-post.processor';
   imports: [
    BullModule.registerQueue(
       { name: 'media-ingest' },
-      { name: 'publishing-queue' }
+      { name: 'publishing-queue' },
+      { name: 'analytics' }
     ),
     PostMediaModule,
     SocialModule,

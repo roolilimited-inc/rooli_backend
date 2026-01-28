@@ -51,6 +51,7 @@ import { CampaignsModule } from './campaigns/campaigns.module';
 import { LabelsModule } from './labels/labels.module';
 import { AiModule } from './ai/ai.module';
 import { RooliBullBoardModule } from './common/bull-boad/bull-board.module';
+import { AnalyticsModule } from './analytics/analytics.module';
 
 @Module({
   imports: [
@@ -165,6 +166,8 @@ import { RooliBullBoardModule } from './common/bull-boad/bull-board.module';
     LabelsModule,
 
     AiModule,
+
+    AnalyticsModule,
   ],
   controllers: [AppController],
   providers: [
