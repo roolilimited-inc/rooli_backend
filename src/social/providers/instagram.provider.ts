@@ -5,7 +5,10 @@ import {
   BadRequestException,
 } from '@nestjs/common';
 import axios from 'axios';
-import { ISocialProvider, SocialCredentials } from '../interfaces/social-provider.interface';
+import {
+  ISocialProvider,
+  SocialCredentials,
+} from '../interfaces/social-provider.interface';
 
 @Injectable()
 export class InstagramProvider implements ISocialProvider {
@@ -16,64 +19,110 @@ export class InstagramProvider implements ISocialProvider {
     credentials: SocialCredentials,
     content: string,
     mediaFiles: { url: string; mimeType: string; coverUrl?: string }[],
-    metadata?: { instagramUserId: string; postType?: 'FEED' | 'REEL' | 'STORY' },
+    metadata?: {
+      pageId: string;
+      postType?: 'FEED' | 'REEL' | 'STORY';
+    },
   ) {
     // 1. Validate IG User ID
     // Note: This is the "Instagram Business Account ID", NOT the Page ID or username.
-    const igUserId = metadata?.instagramUserId;
-    if (!igUserId) throw new BadRequestException('Instagram Business Account ID is required.');
+    const igUserId = metadata?.pageId;
+    if (!igUserId)
+      throw new BadRequestException(
+        'Instagram Business Account ID is required.',
+      );
 
     const accessToken = credentials.accessToken;
     const postType = metadata?.postType || 'FEED';
 
     try {
-      this.logger.log(`Preparing Instagram ${postType} for Account ${igUserId}...`);
+      this.logger.log(
+        `Preparing Instagram ${postType} for Account ${igUserId}...`,
+      );
 
-      const videoCount = mediaFiles.filter((f) => f.mimeType.startsWith('video/')).length;
-      const imageCount = mediaFiles.filter((f) => f.mimeType.startsWith('image/')).length;
+      const videoCount = mediaFiles.filter((f) =>
+        f.mimeType.startsWith('video/'),
+      ).length;
+      const imageCount = mediaFiles.filter((f) =>
+        f.mimeType.startsWith('image/'),
+      ).length;
 
-    // ROUTE 1: REELS
+      // ROUTE 1: REELS
       if (postType === 'REEL') {
-        if (videoCount !== 1) throw new BadRequestException('Reels must contain exactly 1 video.');
+        if (videoCount !== 1)
+          throw new BadRequestException('Reels must contain exactly 1 video.');
         const file = mediaFiles[0];
         // Pass true for isVideo
-        return this.publishMedia(igUserId, accessToken, mediaFiles[0].url, content, 'REELS', true, file.coverUrl);
+        return this.publishMedia(
+          igUserId,
+          accessToken,
+          content,
+          file.url,
+          'REELS',
+          true,
+          file.coverUrl,
+        );
       }
 
       // ROUTE 2: STORIES
       if (postType === 'STORY') {
-        if (mediaFiles.length !== 1) throw new BadRequestException('Stories must contain exactly 1 item.');
+        if (mediaFiles.length !== 1)
+          throw new BadRequestException('Stories must contain exactly 1 item.');
         const file = mediaFiles[0];
         const isVideo = file.mimeType.startsWith('video/');
-        // Pass dynamic isVideo
-        return this.publishMedia(igUserId, accessToken, file.url, '', 'STORIES', isVideo);
+        return this.publishMedia(
+          igUserId,
+          accessToken,
+          '',
+          file.url,
+          'STORIES',
+          isVideo,
+          file.coverUrl,
+        );
       }
 
-      // ROUTE 3: FEED - Single Items
-      if (videoCount === 1) {
-        return this.publishMedia(igUserId, accessToken, content, mediaFiles[0].url, 'VIDEO', true);
+      // ROUTE 3: FEED single items
+      if (videoCount === 1 && mediaFiles.length === 1) {
+        return this.publishMedia(
+          igUserId,
+          accessToken,
+          content,
+          mediaFiles[0].url,
+          'VIDEO',
+          true,
+          mediaFiles[0].coverUrl,
+        );
       }
 
-      if (imageCount === 1) {
-        return this.publishMedia(igUserId, accessToken, content, mediaFiles[0].url, 'IMAGE', false);
+      if (imageCount === 1 && mediaFiles.length === 1) {
+        return this.publishMedia(
+          igUserId,
+          accessToken,
+          content,
+          mediaFiles[0].url,
+          'IMAGE',
+          false,
+        );
       }
 
       // =========================================================
       // 📰 ROUTE 3: FEED (Standard)
       // =========================================================
-      
+
       // A. Carousel (Album)
       if (mediaFiles.length > 1) {
-        if (mediaFiles.length > 10) throw new BadRequestException('Instagram allows max 10 items per carousel.');
+        if (mediaFiles.length > 10)
+          throw new BadRequestException(
+            'Instagram allows max 10 items per carousel.',
+          );
         return this.publishCarousel(igUserId, accessToken, content, mediaFiles);
       }
-
     } catch (error) {
       this.handleError(error);
     }
   }
 
-// ==================================================
+  // ==================================================
   // 📸 SINGLE MEDIA (Image, Video, Reel, Story)
   // ==================================================
   private async publishMedia(
@@ -82,21 +131,21 @@ export class InstagramProvider implements ISocialProvider {
     caption: string,
     mediaUrl: string,
     // The "Target" format we want on Instagram
-    targetType: 'IMAGE' | 'VIDEO' | 'REELS' | 'STORIES', 
+    targetType: 'IMAGE' | 'VIDEO' | 'REELS' | 'STORIES',
     // The actual file type (we infer this from the usage)
-    isVideo: boolean, 
-    coverUrl?: string
+    isVideo: boolean,
+    coverUrl?: string,
   ) {
     // Step 1: Create Container
     const containerId = await this.createContainer(
-      igUserId, 
-      token, 
-      mediaUrl, 
-      targetType, 
-      isVideo, 
+      igUserId,
+      token,
+      mediaUrl,
+      targetType,
+      isVideo,
       caption,
       false, // isCarouselItem
-      coverUrl // 👈 Pass it down
+      coverUrl, // 👈 Pass it down
     );
 
     // Step 2: Publish Container
@@ -114,20 +163,23 @@ export class InstagramProvider implements ISocialProvider {
     isVideo: boolean,
     caption: string,
     isCarouselItem = false,
-    coverUrl?: string
+    coverUrl?: string,
   ): Promise<string> {
     const url = `${this.GRAPH_URL}/${igUserId}/media`;
-    
+
     const body: any = {
       access_token: token,
-      caption: caption,
     };
+
+    if (!isCarouselItem && caption && caption.length > 0) {
+      body.caption = caption;
+    }
 
     // 1. Assign URL to correct field
     if (isVideo) {
       body.video_url = mediaUrl;
       if (coverUrl) {
-        body.cover_url = coverUrl; 
+        body.cover_url = coverUrl;
       }
     } else {
       body.image_url = mediaUrl;
@@ -141,7 +193,7 @@ export class InstagramProvider implements ISocialProvider {
     } else if (isVideo) {
       body.media_type = 'VIDEO';
     } else {
-      // For standard images, usually we don't send media_type, 
+      // For standard images, usually we don't send media_type,
       // or we send 'IMAGE' only if required by specific version.
       // v19.0+ infers it from image_url usually, but let's be explicit if needed.
     }
@@ -151,8 +203,10 @@ export class InstagramProvider implements ISocialProvider {
       body.is_carousel_item = true;
     }
 
-    this.logger.log(`Creating IG Container (Target: ${targetType}, Video: ${isVideo})...`);
-    
+    this.logger.log(
+      `Creating IG Container (Target: ${targetType}, Video: ${isVideo})...`,
+    );
+
     const response = await axios.post(url, body);
 
     console.log('Instagram Create Container Response:');
@@ -161,7 +215,7 @@ export class InstagramProvider implements ISocialProvider {
 
     // 🛑 CRITICAL: Wait for Video Processing
     if (isVideo) {
-      await this.waitForProcessing(containerId, token);
+      await this.waitForProcessing(containerId, token, 30, 5000); // 30 tries = 150s
     }
 
     return containerId;
@@ -174,23 +228,39 @@ export class InstagramProvider implements ISocialProvider {
     igUserId: string,
     token: string,
     caption: string,
-    files: { url: string; mimeType: string, coverUrl?: string }[],
+    files: { url: string; mimeType: string; coverUrl?: string }[],
   ) {
     // Step 1: Create a Container for EACH item (Children)
     // Note: Carousel children do NOT have captions. Only the parent does.
     const childIds: string[] = [];
-    
+
     for (const file of files) {
       const type = file.mimeType.startsWith('video/') ? 'VIDEO' : 'IMAGE';
       const isVideo = file.mimeType.startsWith('video/');
-      const childId = await this.createContainer(igUserId, token, file.url, type, isVideo, '', true, file.coverUrl); // isCarouselItem=true
+      const childId = await this.createContainer(
+        igUserId,
+        token,
+        file.url,
+        type,
+        isVideo,
+        '',
+        true,
+        file.coverUrl,
+      ); // isCarouselItem=true
       childIds.push(childId);
     }
 
+    for (const id of childIds) {
+      // Poll status_code for each child; if any ERROR -> fail fast with details
+      await this.waitForProcessing(id, token, 30, 5000);
+    }
+
     // Step 2: Create the Parent Carousel Container
-    this.logger.log(`Creating Carousel Parent with ${childIds.length} items...`);
+    this.logger.log(
+      `Creating Carousel Parent with ${childIds.length} items...`,
+    );
     const url = `${this.GRAPH_URL}/${igUserId}/media`;
-    
+
     const response = await axios.post(url, {
       media_type: 'CAROUSEL',
       children: childIds, // Array of creation_ids
@@ -198,11 +268,15 @@ export class InstagramProvider implements ISocialProvider {
       access_token: token,
     });
 
-        console.log('Instagram publish carousel Response:');
+    console.log('Instagram publish carousel Response:');
     console.log(response.data);
 
-    
     const parentContainerId = response.data.id;
+
+    // 💡 Add a 3-second buffer. 
+  // Even if children are "FINISHED", the parent object often needs 
+  // a moment to stabilize before the /media_publish call works.
+  await new Promise((resolve) => setTimeout(resolve, 3000));
 
     // Step 3: Publish Parent
     return this.publishContainer(igUserId, token, parentContainerId);
@@ -211,34 +285,77 @@ export class InstagramProvider implements ISocialProvider {
   // ==================================================
   // 🛠️ HELPER: Publish Container (The "Go Live" Step)
   // ==================================================
-  private async publishContainer(igUserId: string, token: string, containerId: string) {
-    const url = `${this.GRAPH_URL}/${igUserId}/media_publish`;
-    
-    this.logger.log(`Publishing IG Container ${containerId}...`);
-    
-    const response = await axios.post(url, {
-      creation_id: containerId,
-      access_token: token,
-    });
+private async publishContainer(
+  igUserId: string,
+  token: string,
+  containerId: string,
+) {
+  const publishUrl = `${this.GRAPH_URL}/${igUserId}/media_publish`;
 
-    console.log('Instagram Publish Container Response:');
-    console.log(response.data);
+  // Optional: wait for container readiness (helps reduce 9007)
+  await this.waitForProcessing(containerId, token, 30, 2000);
 
-    return {
-      platformPostId: response.data.id,
-      // Note: IG API doesn't return the public URL immediately, 
-      // but standard format is usually predictable or fetched via another call.
-      url: `https://www.instagram.com/p/${response.data.id}/`, // Approximate
-    };
+  // Try publishing with retries for "not ready yet" (code 9007)
+  let lastErr: any;
+
+  for (let i = 0; i < 10; i++) {
+    try {
+      const pub = await axios.post(publishUrl, {
+        creation_id: containerId,
+        access_token: token,
+      });
+
+      const mediaId = pub.data.id;
+
+      const info = await axios.get(`${this.GRAPH_URL}/${mediaId}`, {
+        params: { fields: 'permalink', access_token: token },
+      });
+
+      return { platformPostId: mediaId, url: info.data.permalink };
+    } catch (e: any) {
+      lastErr = e;
+      const err = e?.response?.data?.error;
+
+      // Media not ready yet
+      if (err?.code === 9007) {
+        await new Promise((r) => setTimeout(r, 2000));
+        continue;
+      }
+
+      // Any other error -> fail fast with the real message
+      this.logger.error(
+        `IG media_publish failed for container ${containerId}`,
+        e?.response?.data,
+      );
+      throw new BadRequestException(
+        `Instagram media_publish failed: ${err?.message ?? e.message}`,
+      );
+    }
   }
+
+  // If we exhausted retries, surface the last error
+  const err = lastErr?.response?.data?.error;
+  this.logger.error(
+    `IG media_publish still not ready after retries for container ${containerId}`,
+    lastErr?.response?.data,
+  );
+
+  throw new BadRequestException(
+    `Instagram media_publish failed: media still not ready after retries. ${err?.message ?? ''}`.trim(),
+  );
+}
+
 
   // ==================================================
   // ⏳ HELPER: Wait for Status "FINISHED"
   // ==================================================
-  private async waitForProcessing(containerId: string, token: string) {
+  private async waitForProcessing(
+    containerId: string,
+    token: string,
+    maxAttempts = 30,
+    delayMs = 5000,
+  ) {
     let attempts = 0;
-    const maxAttempts = 10; // Wait up to ~50 seconds
-    const delayMs = 5000;   // Check every 5 seconds
 
     while (attempts < maxAttempts) {
       const url = `${this.GRAPH_URL}/${containerId}`;
@@ -246,26 +363,32 @@ export class InstagramProvider implements ISocialProvider {
         params: { fields: 'status_code,status', access_token: token },
       });
 
-      const status = response.data.status_code; // FINISHED, IN_PROGRESS, ERROR
+      const status = response.data.status_code;
 
-      if (status === 'FINISHED') {
-        return true;
-      }
+      if (status === 'FINISHED') return true;
+
       if (status === 'ERROR') {
-        throw new InternalServerErrorException('Instagram failed to process video.');
+        throw new InternalServerErrorException(
+          `Instagram failed to process container ${containerId}: ${JSON.stringify(response.data)}`,
+        );
       }
 
       this.logger.debug(`Container ${containerId} is ${status}. Waiting...`);
-      await new Promise(r => setTimeout(r, delayMs));
+      await new Promise((r) => setTimeout(r, delayMs));
       attempts++;
     }
 
-    throw new InternalServerErrorException('Instagram video processing timed out.');
+    throw new InternalServerErrorException(
+      `Instagram processing timed out for container ${containerId}`,
+    );
   }
 
-  private handleError(error: any) {
-    const msg = error.response?.data?.error?.message || error.message;
-    this.logger.error('Instagram API Error', error.response?.data);
-    throw new InternalServerErrorException(`Instagram Failed: ${msg}`);
-  }
+private handleError(error: any) {
+  // Instagram provides deep error details here:
+  const igError = error.response?.data?.error;
+  this.logger.error('Instagram API Detail:', igError); 
+  
+  const msg = igError?.message || error.message;
+  throw new InternalServerErrorException(`Instagram Failed: ${msg}`);
+}
 }

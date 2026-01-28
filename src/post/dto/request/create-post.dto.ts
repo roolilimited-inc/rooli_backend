@@ -19,9 +19,9 @@ export class CreatePostDto {
     description: 'Text content of the post',
     example: 'Launching our new product today 🚀',
   })
-  @IsNotEmpty()
+  @IsOptional()
   @IsString()
-  content: string;
+  content?: string;
 
   @ApiPropertyOptional({
     description: 'Type of content being posted',
@@ -101,7 +101,7 @@ export class CreatePostDto {
 
   @ApiPropertyOptional({
     description: 'Whether the post requires approval before publishing',
-    example: true,
+    example: false,
   })
   @IsOptional()
   @IsBoolean()

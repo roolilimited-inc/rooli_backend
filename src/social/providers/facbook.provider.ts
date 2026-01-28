@@ -180,76 +180,114 @@ export class FacebookProvider implements ISocialProvider {
   // ==================================================
   // 🎬 REELS (Target: /video_reels)
   // ==================================================
-  private async postReel(pageId: string, token: string, caption: string, videoUrl: string) {
-    // Note: Facebook Reels API has a 3-step initialization flow for binary uploads,
-    // BUT for "Cloud Urls" we can use the `video_reels` endpoint with `video_url`.
-    const url = `${this.GRAPH_URL}/${pageId}/video_reels`;
+ private async postReel(
+  pageId: string,
+  token: string,
+  caption: string,
+  videoUrl: string,
+) {
+  const reelsUrl = `${this.GRAPH_URL}/${pageId}/video_reels`;
 
-    // 1. Initialize & Upload URL
-    const response = await axios.post(url, {
-      video_url: videoUrl,
-      description: caption, // Reel caption
-      upload_phase: 'start',
+  // 1) START
+  const startRes = await axios.post(reelsUrl, null, {
+    params: { upload_phase: 'start', access_token: token },
+  });
+
+  const { video_id, upload_url } = startRes.data;
+
+  // 2) UPLOAD remote URL to rupload
+  await axios.post(upload_url, null, {
+    headers: {
+      Authorization: `OAuth ${token}`,
+      file_url: videoUrl,
+    },
+    maxBodyLength: Infinity,
+  });
+
+  // 3) FINISH (publish)
+  const finishRes = await axios.post(reelsUrl, null, {
+    params: {
+      upload_phase: 'finish',
+      video_id,
+      video_state: 'PUBLISHED',
+      description: caption,
       access_token: token,
-    });
+    },
+  });
 
-    console.log('Facebook Reel Upload Response:');
-    console.log(response.data);
+  return {
+    platformPostId: finishRes.data.post_id ?? video_id, // post_id is best if returned
+    url: finishRes.data.post_id
+      ? `https://www.facebook.com/${finishRes.data.post_id}`
+      : `https://www.facebook.com/reel/${video_id}`,
+  };
+}
 
-    const videoId = response.data.video_id;
-
-    // 2. Check Status (Optional but recommended)
-    // For MVP, since we provide a URL, Facebook handles the fetch asynchronously.
-    // It might take a moment to appear.
-
-    // 3. Publish (If not auto-published by the URL method)
-    // Usually, providing video_url + upload_phase='finish' or just hitting the endpoint triggers it.
-    // The safest "One-Shot" method for URLs:
-    
-    return {
-      platformPostId: videoId,
-      url: `https://www.facebook.com/reel/${videoId}`,
-    };
-  }
 
   // ==================================================
   // 📖 STORIES (Target: /photo_stories or /video_stories)
   // ==================================================
-  private async postPhotoStory(pageId: string, token: string, imageUrl: string) {
-    const url = `${this.GRAPH_URL}/${pageId}/photo_stories`;
-    
-    const response = await axios.post(url, {
+private async postPhotoStory(pageId: string, token: string, imageUrl: string) {
+  // Step 1: upload photo UNPUBLISHED to get photo_id
+  const uploadRes = await axios.post(`${this.GRAPH_URL}/${pageId}/photos`, null, {
+    params: {
       url: imageUrl,
-      published: true,
+      published: false,
       access_token: token,
-    });
+    },
+  });
 
-    console.log('Facebook Photo Story Response:');
-    console.log(response.data);
+  const photoId = uploadRes.data.id;
+  if (!photoId) throw new Error(`Photo upload failed: ${JSON.stringify(uploadRes.data)}`);
 
-    return {
-      platformPostId: response.data.post_id || response.data.id,
-      url: `https://facebook.com/${pageId}`, // Stories don't have permanent public URLs
-    };
+  // Step 2: create story using photo_id
+  const storyRes = await axios.post(`${this.GRAPH_URL}/${pageId}/photo_stories`, null, {
+    params: {
+      photo_id: photoId,
+      access_token: token,
+    },
+  });
+
+  return {
+    platformPostId: storyRes.data.post_id ?? storyRes.data.id ?? photoId,
+    url: `https://facebook.com/${pageId}`,
+  };
+}
+
+
+private async postVideoStory(pageId: string, token: string, videoUrl: string) {
+  const storiesUrl = `${this.GRAPH_URL}/${pageId}/video_stories`;
+
+  // 1) START
+  const startRes = await axios.post(storiesUrl, null, {
+    params: { upload_phase: 'start', access_token: token },
+  });
+
+  const { video_id, upload_url } = startRes.data;
+  if (!video_id || !upload_url) {
+    throw new Error(`Video story start failed: ${JSON.stringify(startRes.data)}`);
   }
 
-  private async postVideoStory(pageId: string, token: string, videoUrl: string) {
-    const url = `${this.GRAPH_URL}/${pageId}/video_stories`;
-    
-    const response = await axios.post(url, {
-      url: videoUrl,
-      published: true,
-      access_token: token,
-    });
+  // 2) UPLOAD remote URL to rupload
+  await axios.post(upload_url, null, {
+    headers: {
+      Authorization: `OAuth ${token}`,
+      file_url: videoUrl,
+    },
+    maxBodyLength: Infinity,
+  });
 
-    console.log('Facebook Video Story Response:');
-    console.log(response.data);
+  // 3) FINISH (publish)
+  const finishRes = await axios.post(storiesUrl, null, {
+    params: { upload_phase: 'finish', video_id, access_token: token },
+  });
 
-    return {
-      platformPostId: response.data.post_id || response.data.id,
-      url: `https://facebook.com/${pageId}`,
-    };
-  }
+  return {
+    platformPostId: finishRes.data.post_id ?? video_id,
+    url: `https://facebook.com/${pageId}`,
+  };
+}
+
 
   // --------------------------------------------------
   // Helpers

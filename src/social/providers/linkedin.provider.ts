@@ -203,6 +203,7 @@ export class LinkedInProvider implements ISocialProvider {
     // B. Upload
     const fileStream = await axios.get(file.url, { responseType: 'stream' });
     await axios.put(uploadUrl, fileStream.data, {
+      httpsAgent: this.httpsAgent,
       headers: { 'Content-Type': file.mimeType },
       maxBodyLength: Infinity,
     });
@@ -224,6 +225,7 @@ export class LinkedInProvider implements ISocialProvider {
 
     try {
       const downloadStream = await axios.get(file.url, {
+        httpsAgent: this.httpsAgent,
         responseType: 'stream',
       });
       await pipeline(downloadStream.data, fs.createWriteStream(tempFilePath));
@@ -272,6 +274,7 @@ export class LinkedInProvider implements ISocialProvider {
         });
 
         const partResp = await axios.put(uploadUrl, fileStream, {
+          httpsAgent: this.httpsAgent,
           headers: {
             'Content-Type': 'application/octet-stream',
           },
@@ -295,6 +298,7 @@ export class LinkedInProvider implements ISocialProvider {
         `${this.API_BASE}/rest/videos?action=finalizeUpload`,
         finalizeBody,
         {
+          httpsAgent: this.httpsAgent,
           headers: {
             Authorization: `Bearer ${token}`,
             'X-Restli-Protocol-Version': '2.0.0',
@@ -352,6 +356,7 @@ export class LinkedInProvider implements ISocialProvider {
     const fileStream = await axios.get(file.url, { responseType: 'stream' });
 
     await axios.put(uploadUrl, fileStream.data, {
+      httpsAgent: this.httpsAgent,
       headers: {
         'Content-Type': file.mimeType,
       },

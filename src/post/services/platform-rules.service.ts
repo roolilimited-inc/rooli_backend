@@ -14,7 +14,7 @@ export class PlatformRulesService {
   // X / Twitter
   // -----------------------
   private readonly X_MAX_MEDIA = 4;
-  private readonly X_MAX_THREAD_TWEETS = 20; // ✅ prevent insane threads
+  private readonly X_MAX_THREAD_TWEETS = 20; // prevent insane threads
   private readonly X_SAFE_LIMIT = 260;
 
   // -----------------------
@@ -39,7 +39,7 @@ export class PlatformRulesService {
     content: string,
     platform: Platform,
     media: MediaItem[] = [],
-    options?: { igKind?: IgPostKind },
+    options?: { igKind?: IgPostKind; FbKind?: 'POST' | 'STORY' | 'REEL' },
   ): ValidationResult {
     const safeContent = (content ?? '').trim();
 
@@ -51,7 +51,11 @@ export class PlatformRulesService {
         return this.processLinkedIn(safeContent, media);
 
       case Platform.FACEBOOK:
-        return this.processFacebook(safeContent, media);
+        return this.processFacebook(
+          safeContent,
+          media,
+          options?.FbKind ?? 'POST',
+        );
 
       case Platform.INSTAGRAM:
         return this.processInstagram(
@@ -116,12 +120,8 @@ export class PlatformRulesService {
         );
       }
 
-      const numbered = this.numberXThread(rawChunks);
-
-      const allValid = numbered.every((t) => twitter.parseTweet(t).valid);
-
-      // ✅ Stable: valid and tweet count not increasing forever
-      if (allValid) return numbered;
+      const allValid = rawChunks.every((t) => twitter.parseTweet(t).valid);
+      if (allValid) return rawChunks;
 
       // If count exploded or we’re not converging, tighten limit
       if (rawChunks.length === lastTweetCount) {
@@ -214,11 +214,6 @@ export class PlatformRulesService {
     return parts;
   }
 
-  private numberXThread(chunks: string[]): string[] {
-    const total = chunks.length;
-    return chunks.map((c, i) => `${c} (${i + 1}/${total})`);
-  }
-
   // ===========================================================================
   // Instagram
   // ===========================================================================
@@ -277,7 +272,7 @@ export class PlatformRulesService {
       }
 
       // Optional: ratio check for reels (allow small range)
-      this.validateIgRatios(media, { kind: 'REEL' });
+      //this.validateIgRatios(media, { kind: 'REEL' });
 
       return { isValid: true, finalContent: content };
     }
@@ -289,7 +284,7 @@ export class PlatformRulesService {
       );
     }
 
-    this.validateIgRatios(media, { kind: 'FEED' });
+    //this.validateIgRatios(media, { kind: 'FEED' });
 
     return { isValid: true, finalContent: content };
   }
@@ -298,29 +293,29 @@ export class PlatformRulesService {
    * ✅ FEED: ratio range 0.8 to 1.91 (width/height)
    * ✅ REEL: near 9/16 with wider tolerance range
    */
-  private validateIgRatios(media: MediaItem[], opts: { kind: IgPostKind }) {
-    for (const m of media) {
-      if (!m.width || !m.height) continue; // metadata missing: skip
+  // private validateIgRatios(media: MediaItem[], opts: { kind: IgPostKind }) {
+  //   for (const m of media) {
+  //     if (!m.width || !m.height) continue; // metadata missing: skip
 
-      const ratio = m.width / m.height;
+  //     const ratio = m.width / m.height;
 
-      if (opts.kind === 'FEED') {
-        // Real-world safe: Instagram feed allows between 4:5 (0.8) and 1.91:1
-        if (ratio < 0.79 || ratio > 1.92) {
-          throw new BadRequestException(
-            `Invalid feed aspect ratio (${ratio.toFixed(2)}). Supported range: 0.80 to 1.91 (4:5 to 1.91:1).`,
-          );
-        }
-      } else {
-        // Reels: 9:16 ≈ 0.5625. Allow small range for encoders/crops.
-        if (ratio < 0.55 || ratio > 0.6) {
-          throw new BadRequestException(
-            `Invalid reel aspect ratio (${ratio.toFixed(2)}). Expected ~9:16.`,
-          );
-        }
-      }
-    }
-  }
+  //     if (opts.kind === 'FEED') {
+  //       // Real-world safe: Instagram feed allows between 4:5 (0.8) and 1.91:1
+  //       if (ratio < 0.79 || ratio > 1.92) {
+  //         throw new BadRequestException(
+  //           `Invalid feed aspect ratio (${ratio.toFixed(2)}). Supported range: 0.80 to 1.91 (4:5 to 1.91:1).`,
+  //         );
+  //       }
+  //     } else {
+  //       // Reels: 9:16 ≈ 0.5625. Allow small range for encoders/crops.
+  //       if (ratio < 0.55 || ratio > 0.6) {
+  //         throw new BadRequestException(
+  //           `Invalid reel aspect ratio (${ratio.toFixed(2)}). Expected ~9:16.`,
+  //         );
+  //       }
+  //     }
+  //   }
+  // }
 
   // ===========================================================================
   // Facebook
@@ -332,22 +327,166 @@ export class PlatformRulesService {
   private processFacebook(
     content: string,
     media: MediaItem[],
+    FbKind: 'POST' | 'STORY' | 'REEL',
   ): ValidationResult {
-    // Keep your policy; adjust if your API has different constraints
+    const safeContent = (content ?? '').trim();
+
+    if (media.length === 0) {
+      return { isValid: true, finalContent: content };
+    }
+    // Generic policy limits (tweak as needed)
+    if (FbKind === 'POST' && media.length > 10) {
+      throw new BadRequestException(
+        'Facebook allows max 10 media items per post.',
+      );
+    }
+
+    if (FbKind === 'POST' && safeContent.length === 0) {
+      throw new BadRequestException('Facebook post content is required.');
+    }
+
     if (media.length > 10) {
       throw new BadRequestException(
         'Facebook allows max 10 media items per post (policy).',
       );
     }
 
-    // Basic mime-type sanity
     for (const m of media) {
-      const ok =
-        m.mimeType?.startsWith('image/') || m.mimeType?.startsWith('video/');
-      if (!ok) {
+      // Basic checks
+      if (!m?.mimeType) {
+        throw new BadRequestException('Missing media mimeType.');
+      }
+
+      const isImage = m.mimeType.startsWith('image/');
+      const isVideo = m.mimeType.startsWith('video/');
+
+      if (!isImage && !isVideo) {
         throw new BadRequestException(
           'Facebook media must be image/* or video/*.',
         );
+      }
+
+      // bytes is required for size checks (and generally should always exist)
+      if (m.size == null || Number.isNaN(m.size)) {
+        throw new BadRequestException('Missing media size (sizeBytes).');
+      }
+
+      // -----------------------------------------------------------------------
+      // FEED_POST (permissive)
+      // -----------------------------------------------------------------------
+      if (FbKind === 'POST') {
+        // Keep it permissive for generic posts.
+        continue;
+      }
+
+      // -----------------------------------------------------------------------
+      // STORY (photos + mp4 videos)
+      // -----------------------------------------------------------------------
+      if (FbKind === 'STORY') {
+        if (isImage) {
+          // Allowed image types: .jpeg, .bmp, .png, .gif, .tiff
+          // With mimeType-only, enforce via common MIME values:
+          const allowedImageMimes = new Set([
+            'image/jpeg',
+            'image/jpg',
+            'image/bmp',
+            'image/png',
+            'image/gif',
+            'image/tiff',
+          ]);
+
+          if (!allowedImageMimes.has(m.mimeType)) {
+            throw new BadRequestException(
+              'Facebook Story images must be jpeg/jpg, bmp, png, gif, or tiff.',
+            );
+          }
+
+          // Size <= 10MB
+          if (m.size > 10 * 1024 * 1024) {
+            throw new BadRequestException(
+              'Facebook Story image must not exceed 10MB.',
+            );
+          }
+
+          // PNG "recommendation" (not a hard fail)
+          // If you want to hard fail, change to throw.
+          // if (m.mimeType === 'image/png' && m.bytes > 1 * 1024 * 1024) {
+          //   this.logger?.warn?.('PNG > 1MB may appear pixelated on Facebook Story.');
+          // }
+
+          // Story images don’t need duration/ratio checks.
+          continue;
+        }
+
+        // Video story rules
+        // Mime type: mp4 recommended/expected
+        if (m.mimeType !== 'video/mp4') {
+          throw new BadRequestException('Facebook Story video must be mp4.');
+        }
+
+        // Need metadata to validate
+        if (m.duration == null) {
+          throw new BadRequestException('Missing video duration.');
+        }
+        if (m.width == null || m.height == null) {
+          throw new BadRequestException(
+            'Missing video dimensions (width/height).',
+          );
+        }
+
+        // Duration: 3 to 90 seconds (your pasted rules)
+        if (m.duration < 3 || m.duration > 90) {
+          throw new BadRequestException(
+            'Facebook Story video must be between 3 and 90 seconds.',
+          );
+        }
+
+        // Resolution: minimum 540x960
+        if (m.width < 540 || m.height < 960) {
+          throw new BadRequestException(
+            'Facebook Story video must be at least 540x960.',
+          );
+        }
+
+        continue;
+      }
+
+      // -----------------------------------------------------------------------
+      // REEL (video-only)
+      // -----------------------------------------------------------------------
+      if (FbKind === 'REEL') {
+        if (!isVideo) {
+          throw new BadRequestException('Facebook Reel must be a video.');
+        }
+
+        if (m.mimeType !== 'video/mp4') {
+          throw new BadRequestException('Facebook Reel video must be mp4.');
+        }
+
+        if (m.duration == null) {
+          throw new BadRequestException('Missing video duration.');
+        }
+        if (m.width == null || m.height == null) {
+          throw new BadRequestException(
+            'Missing video dimensions (width/height).',
+          );
+        }
+
+        // Duration: 3–90 seconds
+        if (m.duration < 3 || m.duration > 90) {
+          throw new BadRequestException(
+            'Facebook Reel must be 3 to 90 seconds.',
+          );
+        }
+
+        // Resolution: minimum 540x960
+        if (m.width < 540 || m.height < 960) {
+          throw new BadRequestException(
+            'Facebook Reel must be at least 540x960.',
+          );
+        }
+
+        continue;
       }
     }
 

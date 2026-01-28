@@ -24,22 +24,26 @@ export class PostService {
   constructor(
     private prisma: PrismaService,
     @InjectQueue('media-ingest') private mediaIngestQueue: Queue,
+    @InjectQueue('publishing-queue') private publishingQueue: Queue,
     private postFactory: PostFactory,
     private destinationBuilder: DestinationBuilder,
     private queueService: QueueService,
   ) {}
 
-async createPost(user: any, workspaceId: string, dto: CreatePostDto) {
-    // 1. Validate & Resolve Metadata (Time, Status, Payloads)
+  async createPost(user: any, workspaceId: string, dto: CreatePostDto) {
     this.validateFeatures(user, dto);
-    
-    const { finalScheduledAt, status } = await this.resolveScheduleAndStatus(workspaceId, dto);
 
-    const payloads = await this.destinationBuilder.preparePayloads(workspaceId, dto);
+    const { finalScheduledAt, status } = await this.resolveScheduleAndStatus(
+      workspaceId,
+      dto,
+    );
 
-    // 2. Execute DB Transaction
-    return this.prisma.$transaction(async (tx) => {
-      // A) The Root Post
+    const payloads = await this.destinationBuilder.preparePayloads(
+      workspaceId,
+      dto,
+    );
+
+    const created = await this.prisma.$transaction(async (tx) => {
       const post = await this.postFactory.createMasterPost(
         tx,
         user.userId,
@@ -48,20 +52,35 @@ async createPost(user: any, workspaceId: string, dto: CreatePostDto) {
         status,
       );
 
-      // B) Root Destinations
       await this.destinationBuilder.saveDestinations(tx, post.id, payloads);
 
-      // C) Materialize Threads (if applicable)
-      await this.handleTwitterThreads(tx, post, payloads, dto, status);
-
-      // D) Approval flow
       if (dto.needsApproval) {
         await this.createApproval(tx, post.id, user.id);
       }
 
       return post;
     });
+
+    // ✅ enqueue AFTER transaction commit
+    if (status === 'SCHEDULED' && finalScheduledAt) {
+      const delay = Math.max(0, finalScheduledAt.getTime() - Date.now());
+
+      await this.publishingQueue.add(
+        'publish-post',
+        { postId: created.id },
+        {
+          delay,
+          jobId: created.id, // idempotency: one job per post
+          removeOnComplete: true,
+          attempts: 3,
+          backoff: { type: 'exponential', delay: 5000 },
+        },
+      );
+    }
+
+    return created;
   }
+
   /**
    * Helper to check Pricing Limits
    */
@@ -270,41 +289,46 @@ async createPost(user: any, workspaceId: string, dto: CreatePostDto) {
   }
 
   async updatePost(workspaceId: string, postId: string, dto: UpdatePostDto) {
-    //  Fetch the post to check permissions & status
-    const post = await this.prisma.post.findFirst({
+    const existing = await this.prisma.post.findFirst({
       where: { id: postId, workspaceId },
       include: { media: true },
     });
 
-    if (!post) throw new NotFoundException('Post not found');
+    if (!existing) throw new NotFoundException('Post not found');
 
-    // 2. STATUS CHECK: Can't edit if it's already publishing
-    if (post.status === 'PUBLISHING' || post.status === 'PUBLISHED') {
+    if (existing.status === 'PUBLISHING' || existing.status === 'PUBLISHED') {
       throw new BadRequestException(
         'Cannot edit a post that is published or processing.',
       );
     }
 
-    // 3. TRANSACTION (Update content & media)
-    return this.prisma.$transaction(async (tx) => {
-      // A. Update Basic Fields
+    const oldScheduledAt = existing.scheduledAt?.getTime() ?? null;
+    const newScheduledAt = dto.scheduledAt
+      ? new Date(dto.scheduledAt).getTime()
+      : null;
+
+    const isRoot = existing.parentPostId === null;
+
+    // Run DB transaction
+    const updated = await this.prisma.$transaction(async (tx) => {
       const updatedPost = await tx.post.update({
         where: { id: postId },
         data: {
-          content: dto.content,
-          scheduledAt: dto.scheduledAt, // Changing this moves the post in the calendar
-          // If the status was 'FAILED', reset it to 'SCHEDULED' or 'DRAFT'
-          status: post.status === 'FAILED' ? 'DRAFT' : undefined,
+          content: dto.content ?? undefined,
+          scheduledAt: dto.scheduledAt ?? undefined,
+
+          // If it was FAILED and user edits, move it back to SCHEDULED/DRAFT intentionally
+          status:
+            existing.status === 'FAILED'
+              ? dto.scheduledAt
+                ? 'SCHEDULED'
+                : 'DRAFT'
+              : undefined,
         },
       });
 
-      // B. Handle Media Updates (If provided)
-      // The simplest strategy: "Wipe and Replace" for the specific post
       if (dto.mediaIds) {
-        // 1. Remove old links
         await tx.postMedia.deleteMany({ where: { postId } });
-
-        // 2. Add new links
         await tx.postMedia.createMany({
           data: dto.mediaIds.map((mid, idx) => ({
             postId,
@@ -314,14 +338,8 @@ async createPost(user: any, workspaceId: string, dto: CreatePostDto) {
         });
       }
 
-      // C. Special Thread Handling (If updating the ROOT post's time)
-      // If you move the Root Post from 9:00 AM to 10:00 AM,
-      // you must move ALL children threads to 10:00 AM too.
-      if (dto.scheduledAt && post.contentType !== 'THREAD') {
-        // Find all children (recursive update is hard, but 1-level deep is usually enough for threads)
-        // Or better: update all posts in this "thread chain"
-        // We can find them by parentPostId, or walk the tree.
-        // For MVP: Just update direct children.
+      // If you move root time, move children times too
+      if (dto.scheduledAt && isRoot) {
         await tx.post.updateMany({
           where: { parentPostId: postId },
           data: { scheduledAt: dto.scheduledAt },
@@ -330,30 +348,67 @@ async createPost(user: any, workspaceId: string, dto: CreatePostDto) {
 
       return updatedPost;
     });
+
+    // ===== Queue sync AFTER commit =====
+
+    // Decide if this post should have a delayed job
+    const shouldSchedule =
+      isRoot && updated.status === 'SCHEDULED' && !!updated.scheduledAt;
+
+    const scheduleChanged = oldScheduledAt !== newScheduledAt;
+
+    // Also refresh job if status moved into/out of SCHEDULED
+    const statusChangedAffectsJob =
+      (existing.status === 'SCHEDULED') !== (updated.status === 'SCHEDULED');
+
+    const needsJobRefresh = scheduleChanged || statusChangedAffectsJob;
+
+    if (needsJobRefresh) {
+      // Always remove old job
+      await this.removePostJob(postId);
+
+      // Re-add if still schedulable
+      if (shouldSchedule) {
+        await this.schedulePostJob(postId, updated.scheduledAt!);
+      }
+    } else {
+      // Schedule not changed, but ensure job exists if it should
+      if (shouldSchedule) {
+        const job = await this.publishingQueue.getJob(postId);
+        if (!job) await this.schedulePostJob(postId, updated.scheduledAt!);
+      } else {
+        // If it shouldn't be scheduled, make sure there is no job hanging around
+        await this.removePostJob(postId);
+      }
+    }
+
+    return updated;
   }
 
   async deletePost(workspaceId: string, postId: string) {
-    const post = await this.getOne(workspaceId, postId);
-
-    // 1. Recursive Delete Helper
-    // We need to find all children, grandchildren, etc.
-    // Since Prisma "NoAction" doesn't cascade automatically for self-relations sometimes,
-    // we do it manually to be safe.
-
-    const deleteIds = [postId];
-
-    // Find children
-    const children = await this.prisma.post.findMany({
-      where: { parentPostId: postId },
+    const post = await this.prisma.post.findFirst({
+      where: { id: postId, workspaceId },
+      select: { id: true, parentPostId: true },
     });
-    for (const child of children) {
-      deleteIds.push(child.id);
-      // (If you allow deep nesting, you'd recurse here, but Twitter threads are usually flat linked lists)
-      // For simplicity, we assume we delete the chain.
-    }
+
+    if (!post) throw new NotFoundException('Post not found');
+
+    // Only root posts have scheduled jobs in your design
+    const rootId = post.parentPostId ? post.parentPostId : post.id;
+
+    // remove queue job (idempotent)
+    await this.removePostJob(rootId);
+
+    // delete chain
+    const deleteIds = [rootId];
+    const children = await this.prisma.post.findMany({
+      where: { parentPostId: rootId },
+      select: { id: true },
+    });
+    deleteIds.push(...children.map((c) => c.id));
 
     return this.prisma.post.deleteMany({
-      where: { id: { in: deleteIds } },
+      where: { id: { in: deleteIds }, workspaceId },
     });
   }
 
@@ -617,15 +672,20 @@ async createPost(user: any, workspaceId: string, dto: CreatePostDto) {
     });
   }
 
-  private async resolveScheduleAndStatus(workspaceId: string, dto: CreatePostDto) {
+  private async resolveScheduleAndStatus(
+    workspaceId: string,
+    dto: CreatePostDto,
+  ) {
     let finalScheduledAt: Date | null = null;
 
     if (dto.isAutoSchedule) {
-      finalScheduledAt = await this.queueService.getNextAvailableSlot(workspaceId);
+      finalScheduledAt =
+        await this.queueService.getNextAvailableSlot(workspaceId);
     } else if (dto.scheduledAt) {
-      finalScheduledAt = dto.timezone && !dto.scheduledAt.endsWith('Z')
-        ? fromZonedTime(dto.scheduledAt, dto.timezone)
-        : new Date(dto.scheduledAt);
+      finalScheduledAt =
+        dto.timezone && !dto.scheduledAt.endsWith('Z')
+          ? fromZonedTime(dto.scheduledAt, dto.timezone)
+          : new Date(dto.scheduledAt);
 
       // Past date check
       if (isBefore(finalScheduledAt, subMinutes(new Date(), 5))) {
@@ -635,63 +695,41 @@ async createPost(user: any, workspaceId: string, dto: CreatePostDto) {
 
     const status: PostStatus = dto.needsApproval
       ? 'PENDING_APPROVAL'
-      : finalScheduledAt ? 'SCHEDULED' : 'DRAFT';
+      : finalScheduledAt
+        ? 'SCHEDULED'
+        : 'DRAFT';
 
     return { finalScheduledAt, status };
   }
 
-  private async handleTwitterThreads(
+  private async createApproval(
     tx: Prisma.TransactionClient,
-    rootPost: any,
-    payloads: any[],
-    dto: CreatePostDto,
-    status: PostStatus
+    postId: string,
+    userId: string,
   ) {
-    const twitterPayloads = payloads.filter((p) => p.platform === 'TWITTER');
-    if (!twitterPayloads.length) return;
-
-    // Validate chain consistency across profiles
-    const chains = twitterPayloads
-      .map((p) => p.metadata?.threadChain)
-      .filter((c) => Array.isArray(c) && c.length);
-
-    if (chains.length > 1 && chains.some(c => JSON.stringify(c) !== JSON.stringify(chains[0]))) {
-      throw new BadRequestException('Twitter thread content differs across profiles.');
-    }
-
-    const chain = chains[0];
-    if (!chain) return;
-
-    // Materialize the chain
-    let previousPostId = rootPost.id;
-    const hasExplicitThreads = Array.isArray(dto.threads) && dto.threads.length > 0;
-
-    for (let i = 0; i < chain.length; i++) {
-      const mediaIds = hasExplicitThreads ? (dto.threads![i]?.mediaIds ?? []) : [];
-      
-      const threadPost = await this.postFactory.createThreadPost(
-        tx,
-        rootPost.authorId,
-        rootPost.workspaceId,
-        previousPostId,
-        { content: chain[i], mediaIds },
-        status,
-        rootPost.scheduledAt,
-        rootPost.timezone,
-        rootPost.campaignId,
-      );
-
-      await this.destinationBuilder.saveDestinations(tx, threadPost.id, 
-        twitterPayloads.map(p => ({ ...p, contentOverride: chain[i], metadata: Prisma.JsonNull }))
-      );
-
-      previousPostId = threadPost.id;
-    }
-  }
-
-  private async createApproval(tx: Prisma.TransactionClient, postId: string, userId: string) {
     await tx.postApproval.create({
       data: { postId, requesterId: userId, status: 'PENDING' },
     });
+  }
+
+  private async schedulePostJob(postId: string, scheduledAt: Date) {
+    const delay = Math.max(0, scheduledAt.getTime() - Date.now());
+
+    await this.publishingQueue.add(
+      'publish-post',
+      { postId },
+      {
+        delay,
+        jobId: postId, // one job per post
+        removeOnComplete: true,
+        attempts: 3,
+        backoff: { type: 'exponential', delay: 5000 },
+      },
+    );
+  }
+
+  private async removePostJob(postId: string) {
+    const job = await this.publishingQueue.getJob(postId);
+    if (job) await job.remove();
   }
 }

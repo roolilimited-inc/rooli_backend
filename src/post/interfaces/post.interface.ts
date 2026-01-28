@@ -30,6 +30,13 @@ export interface MediaItem {
   mimeType: string; // e.g. "image/jpeg", "video/mp4", "application/pdf"
   width?: number;
   height?: number;
-  sizeBytes?: number;
-  durationSec?: number;
+  size?: number;
+  duration?: number;
 }
+
+
+export type ThreadNode = {
+  content: string;
+  mediaIds?: string[];
+  targetProfileIds?: string[];
+};
