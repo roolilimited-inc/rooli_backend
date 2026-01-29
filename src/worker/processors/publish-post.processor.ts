@@ -148,7 +148,6 @@ export class PublishPostProcessor extends WorkerHost {
     const thread: ThreadNode[] = Array.isArray(meta.thread) ? meta.thread : [];
 
     console.log('Publishing Twitter thread replies:', thread.length);
-    console.log(thread)
 
     for (const node of thread) {
       // Optional targeting per node
