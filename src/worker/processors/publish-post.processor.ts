@@ -147,12 +147,15 @@ export class PublishPostProcessor extends WorkerHost {
     const meta = (dest.metadata ?? {}) as any;
     const thread: ThreadNode[] = Array.isArray(meta.thread) ? meta.thread : [];
 
+    console.log('Publishing Twitter thread replies:', thread.length);
+    console.log(thread)
+
     for (const node of thread) {
       // Optional targeting per node
       if (
         Array.isArray(node.targetProfileIds) &&
         node.targetProfileIds.length > 0 &&
-        !node.targetProfileIds.includes(dest.profileId)
+        !node.targetProfileIds.includes(dest.socialProfileId)
       ) {
         continue;
       }
