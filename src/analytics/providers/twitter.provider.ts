@@ -1,11 +1,12 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { AnalyticsStrategy, PostMetrics, AccountMetrics, AnalyticsProvider, FetchAccountAnalyticsInput, FetchBatchPostAnalyticsInput, FetchPostAnalyticsInput } from '../interfaces/analytics-strategy.interface';
+
 import { TwitterApi } from 'twitter-api-v2';
 import { Platform } from '@generated/enums';
 import { ConfigService } from '@nestjs/config';
+import { AccountMetrics, IAnalyticsProvider, PostMetrics } from '../interfaces/analytics-provider.interface';
 
 @Injectable()
-export class TwitterAnalyticsProvider implements AnalyticsProvider {
+export class TwitterAnalyticsProvider implements IAnalyticsProvider {
   platform: Platform = 'TWITTER';
   private readonly logger = new Logger(TwitterAnalyticsProvider.name);
 
@@ -39,97 +40,78 @@ export class TwitterAnalyticsProvider implements AnalyticsProvider {
     });
   }
 
-  async fetchPostAnalytics(input: FetchPostAnalyticsInput): Promise<PostMetrics> {
-    const client = this.makeClient(input.credentials);
-
-    try {
-      const { data } = await client.v2.singleTweet(input.platformPostId, {
-        'tweet.fields': ['public_metrics', 'non_public_metrics', 'organic_metrics'],
-      });
-      return this.mapToDomain(data);
-    } catch (e: any) {
-       // Handle "Tweet not found" gracefully if desired
-       throw e;
-    }
-  }
-
-  async fetchBatchPostAnalytics(
-    input: FetchBatchPostAnalyticsInput,
-  ): Promise<Map<string, PostMetrics>> {
-    const client = this.makeClient(input.credentials);
-    const ids = input.platformPostIds.filter(Boolean);
-    const result = new Map<string, PostMetrics>();
-
-    if (!ids.length) return result;
-
-    // Chunk size for Twitter V2 API
-    const chunkSize = 100;
+  async getPostStats(
+    postIds: string[], 
+    credentials: any
+  ): Promise<PostMetrics[]> {
+    if (!postIds.length) return [];
     
-    for (let i = 0; i < ids.length; i += chunkSize) {
-      const chunk = ids.slice(i, i + chunkSize);
-      
+    const client = this.makeClient(credentials);
+    const results: PostMetrics[] = [];
+
+    // Twitter allows batching up to 100 IDs
+    const chunks = this.chunkArray(postIds, 100);
+    
+    for (const chunk of chunks) {
       try {
         const resp = await client.v2.tweets(chunk, {
           'tweet.fields': ['public_metrics', 'non_public_metrics', 'organic_metrics'],
         });
 
-        // Loop over successful data
-        for (const tweet of resp.data ?? []) {
-          result.set(tweet.id, this.mapToDomain(tweet));
-        }
-
-        // Optional: Inspect resp.errors for partial failures (deleted tweets, etc)
-        if (resp.errors?.length) {
-            this.logger.debug(`Batch twitter partial errors: ${resp.errors.length}`);
-        }
+        const mapped = (resp.data ?? []).map(tweet => this.mapToDomain(tweet));
+        results.push(...mapped);
       } catch (e: any) {
         this.logger.error(`Twitter batch chunk failed: ${e.message}`);
-        // Continue to next chunk even if this one failed
       }
     }
 
-    return result;
+    return results;
   }
-
-  async fetchAccountAnalytics(input: FetchAccountAnalyticsInput): Promise<AccountMetrics> {
-    const client = this.makeClient(input.credentials);
+  async getAccountStats(userId: string, credentials: any): Promise<AccountMetrics> {
+    const client = this.makeClient(credentials);
 
     // This fetches the user associated with the Access Token/Secret
-    const { data: me } = await client.v2.me({ 
+    const { data: user } = await client.v2.me({ 
         'user.fields': ['public_metrics'] 
     });
 
     return {
-      followersTotal: me.public_metrics?.followers_count ?? 0,
-      // X API limitation: Impressions/Reach are not available at Account level via Standard API
-      impressions: 0,
-      reach: 0,
-      profileViews: 0,
-      engagementCount: 0,
-      metadata: me.public_metrics ?? {},
+      platformId: user.id,
+      followersCount: user.public_metrics?.followers_count ?? 0,
+      // Account-level impressions are not available via standard X API
+      impressionsCount: undefined, 
+      profileViews: undefined,
+      fetchedAt: new Date(),
     };
   }
 
+  
   private mapToDomain(tweet: any): PostMetrics {
-    // Priority: Organic metrics (if available/owned) -> Public metrics
-    const organic = tweet.organic_metrics;
     const publicM = tweet.public_metrics ?? {};
-    const nonPublic = tweet.non_public_metrics; // impressions usually live here for owned tweets
+    const organic = tweet.organic_metrics;
+    const nonPublic = tweet.non_public_metrics;
 
     return {
+      postId: tweet.id,
       likes: publicM.like_count ?? 0,
       comments: publicM.reply_count ?? 0,
+      // X doesn't have a single "share" field; it's Retweets + Quotes
       shares: (publicM.retweet_count ?? 0) + (publicM.quote_count ?? 0),
       saves: publicM.bookmark_count ?? 0,
       
-      // Attempt to find impressions/views in non_public or organic metrics
+      // Impressions usually require "User Context" (OAuth 1.0a)
       impressions: nonPublic?.impression_count ?? organic?.impression_count ?? 0,
-      videoViews: publicM.view_count ?? 0, 
-
-      clicks: organic?.url_link_clicks ?? 0, // "Clicks" usually means link clicks
-      reach: 0, // Twitter doesn't typically provide "Reach" (unique people), only impressions
-      
-      metadata: { ...publicM, ...organic, ...nonPublic },
+      reach: undefined, // X does not provide unique reach for organic posts
+      clicks: organic?.url_link_clicks ?? 0,
+      videoViews: publicM.view_count ?? 0,
     };
+  }
+
+  private chunkArray<T>(array: T[], size: number): T[][] {
+    const chunks: T[][] = [];
+    for (let i = 0; i < array.length; i += size) {
+      chunks.push(array.slice(i, i + size));
+    }
+    return chunks;
   }
 }
