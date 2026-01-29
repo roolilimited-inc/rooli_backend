@@ -439,29 +439,36 @@ export class BillingService {
       `Found ${expiredSubs.length} expired subscriptions. Locking accounts...`,
     );
 
-    // 2. Process Locks (Using Promise.all for speed, or loop for safety)
-    for (const sub of expiredSubs) {
-      await this.prisma.$transaction([
-        // A. Mark Subscription as Past Due
-        this.prisma.subscription.update({
-          where: { id: sub.id },
-          data: { status: 'past_due', isActive: false },
-        }),
+     for (const sub of expiredSubs) {
+    await this.prisma.$transaction(async (tx) => {
+      // Guarded update: only flip if still ACTIVE (prevents double-processing issues)
+      const updated = await tx.subscription.updateMany({
+        where: { id: sub.id, status: 'active' },
+        data: { status: 'past_due', isActive: false },
+      });
 
-        // B.LOCK SOCIAL PROFILES (Stops Background Workers)
-        // This prevents the system from posting for non-paying users
-        this.prisma.socialProfile.updateMany({
-          where: { workspace: { organizationId: sub.organizationId } },
-          data: { isActive: false },
-        }),
+      // If another instance already processed it, skip locking
+      if (updated.count === 0) return;
 
-        // C. Optional: Lock Organization Login
-        // this.prisma.organization.update({ ... })
-      ]);
+      // Lock social profiles (only those currently active)
+      await tx.socialProfile.updateMany({
+        where: {
+          isActive: true,
+          workspace: { organizationId: sub.organizationId },
+        },
+        data: { isActive: false },
+      });
 
-      this.logger.log(`🔒 Locked Organization: ${sub.organizationId}`);
-    }
+      // Optional: lock org too (helps your other queries)
+      await tx.organization.update({
+        where: { id: sub.organizationId },
+        data: { isActive: false },
+      });
+    });
+
+    this.logger.log(`🔒 Locked Organization: ${sub.organizationId}`);
   }
+}
 
   private inferCountry(ipCountry?: string, timeZone?: string) {
     if (timeZone === 'Africa/Lagos') return 'NG';
