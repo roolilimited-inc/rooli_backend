@@ -1,6 +1,3 @@
-import { Platform } from "@generated/enums";
-
-
 export interface AccountMetrics {
   platformId: string;
   followersCount: number;
@@ -21,13 +18,18 @@ export interface PostMetrics {
   saves?: number; // Primarily for IG/Twitter
 }
 
+export interface AuthCredentials {
+  accessToken: string;
+  accessSecret?: string; 
+}
+
 export interface IAnalyticsProvider {
   /**
    * Fetches high-level account stats (Followers, etc.)
    * @param id The platform-specific ID (Page ID, User ID, or URN)
    * @param credentials Platform specific auth (Token string or OAuth object)
    */
-  getAccountStats(id: string, credentials: any): Promise<AccountMetrics>;
+  getAccountStats(id: string, credentials: AuthCredentials): Promise<AccountMetrics>;
 
   /**
    * Fetches stats for a list of posts (Batched)
@@ -37,7 +39,7 @@ export interface IAnalyticsProvider {
    */
   getPostStats(
     postIds: string[], 
-    credentials: any, 
+    credentials: AuthCredentials, 
     context?: Record<string, any>
   ): Promise<PostMetrics[]>;
 }

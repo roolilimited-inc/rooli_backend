@@ -4,6 +4,7 @@ import { firstValueFrom } from 'rxjs';
 import { HttpService } from '@nestjs/axios';
 import {
   AccountMetrics,
+  AuthCredentials,
   IAnalyticsProvider,
   PostMetrics,
 } from '../interfaces/analytics-provider.interface';
@@ -24,9 +25,10 @@ export class InstagramAnalyticsProvider implements IAnalyticsProvider {
    */
   async getAccountStats(
     igUserId: string,
-    token: string,
+    credentials: AuthCredentials,
   ): Promise<AccountMetrics> {
     try {
+      const token = credentials.accessToken
       // 1. Fetch Follower Count & Profile Views/Reach
       // Insights metrics: impressions, reach, profile_views
       const fields = 'followers_count';
@@ -66,8 +68,9 @@ export class InstagramAnalyticsProvider implements IAnalyticsProvider {
    */
   async getPostStats(
     mediaIds: string[],
-    token: string,
+    credentials: AuthCredentials,
   ): Promise<PostMetrics[]> {
+    const token = credentials.accessToken;
     if (mediaIds.length === 0) return [];
     const chunks = this.chunkArray(mediaIds, 50);
    const results = await Promise.all(

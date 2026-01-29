@@ -2,7 +2,7 @@ import {  Injectable, Logger } from '@nestjs/common';
 import { HttpService } from '@nestjs/axios';
 import { firstValueFrom } from 'rxjs';
 import { Platform } from '@generated/enums';
-import { AccountMetrics, IAnalyticsProvider, PostMetrics } from '../interfaces/analytics-provider.interface';
+import { AccountMetrics, AuthCredentials, IAnalyticsProvider, PostMetrics } from '../interfaces/analytics-provider.interface';
 
 @Injectable()
 export class LinkedInAnalyticsProvider implements IAnalyticsProvider {
@@ -20,7 +20,8 @@ export class LinkedInAnalyticsProvider implements IAnalyticsProvider {
     };
   }
 
-  async getAccountStats(id: string, token: string): Promise<AccountMetrics> {
+  async getAccountStats(id: string, credentials: AuthCredentials): Promise<AccountMetrics> {
+    const token = credentials.accessToken;
     const fullUrn = this.ensureUrn(id);
 
   if (fullUrn.includes('organization')) {
@@ -121,9 +122,10 @@ export class LinkedInAnalyticsProvider implements IAnalyticsProvider {
 
   async getPostStats(
     postIds: string[],
-    token: string,
+   credentials: AuthCredentials,
     context?: { pageId?: string },
   ): Promise<PostMetrics[]> {
+    const token = credentials.accessToken;
     if (postIds.length === 0) return [];
     // Ensure all post IDs are URNs (shares or ugcPosts)
     const postUrns = postIds.map(id => id.startsWith('urn:li:') ? id : `urn:li:share:${id}`);

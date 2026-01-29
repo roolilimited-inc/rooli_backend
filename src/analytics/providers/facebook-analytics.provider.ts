@@ -2,7 +2,7 @@ import { Injectable, Logger, BadRequestException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { firstValueFrom } from 'rxjs';
 import { HttpService } from '@nestjs/axios';
-import { AccountMetrics, IAnalyticsProvider, PostMetrics } from '../interfaces/analytics-provider.interface';
+import { AccountMetrics, AuthCredentials, IAnalyticsProvider, PostMetrics } from '../interfaces/analytics-provider.interface';
 
 @Injectable()
 export class FacebookAnalyticsProvider implements IAnalyticsProvider {
@@ -18,9 +18,10 @@ export class FacebookAnalyticsProvider implements IAnalyticsProvider {
    */
   async getAccountStats(
     pageId: string,
-    token: string,
+    credentials: AuthCredentials,
   ): Promise<AccountMetrics> {
     try {
+      const token = credentials.accessToken
       // 1. Fetch Public Fields (Fan Count) & Insights (Impressions/Views)
       // Note: 'page_impressions' and 'page_views_total' are usually 28-day aggregates or daily
       const fields = 'fan_count,followers_count';
@@ -59,7 +60,8 @@ export class FacebookAnalyticsProvider implements IAnalyticsProvider {
    * Fetches public metrics (Likes/Comments) + Private Insights (Impressions/Reach)
    * Limit: 50 IDs per batch
    */
-  async getPostStats(postIds: string[], token: string): Promise<PostMetrics[]> {
+  async getPostStats(postIds: string[], credentials: AuthCredentials): Promise<PostMetrics[]> {
+    const token = credentials.accessToken;
   if (postIds.length === 0) return [];
 
   const chunks = this.chunkArray(postIds, this.BATCH_LIMIT);
