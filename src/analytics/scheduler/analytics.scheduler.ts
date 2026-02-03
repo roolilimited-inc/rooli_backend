@@ -8,6 +8,7 @@ import { Platform, PlanTier } from '@generated/enums';
 @Injectable()
 export class AnalyticsScheduler {
   private readonly logger = new Logger(AnalyticsScheduler.name);
+  private readonly BATCH_SIZE = 100;
 
   constructor(
     @InjectQueue('analytics-queue') private readonly analyticsQueue: Queue,
@@ -19,89 +20,101 @@ export class AnalyticsScheduler {
    * Runs every day at midnight (00:00) to fetch fresh stats.
    * Customize via CronExpression if needed.
    */
- // @Cron(CronExpression.EVERY_DAY_AT_MIDNIGHT)
+  // @Cron(CronExpression.EVERY_DAY_AT_MIDNIGHT)
   async scheduleDailyFetch() {
     this.logger.log('⏰ Starting Daily Analytics Scheduling...');
 
-    // 1. Fetch all ACTIVE social profiles
-    // We only want profiles that are connected (accessToken exists)
-    // and belong to active subscriptions.
-    const profiles = await this.prisma.socialProfile.findMany({
-      where: {
-        isActive: true,
-        accessToken: { not: null },
-        workspace: {
-          organization: {
-            isActive: true,
+    let cursor: string | undefined;
+    let hasMore = true;
+    let totalScheduled = 0;
+
+    while (hasMore) {
+      // 1. Fetch all ACTIVE social profiles
+      // We only want profiles that are connected (accessToken exists)
+      // and belong to active subscriptions.
+      const profiles = await this.prisma.socialProfile.findMany({
+        take: this.BATCH_SIZE,
+        skip: cursor ? 1 : 0,
+        cursor: cursor ? { id: cursor } : undefined,
+        orderBy: { id: 'asc' },
+        where: {
+          isActive: true,
+          accessToken: { not: null },
+          workspace: {
+            organization: {
+              isActive: true,
+            },
           },
         },
-      },
-      select: {
-        id: true,
-        platform: true,
-        platformId: true,
-        accessToken: true,
-        workspace: {
-          select: {
-            id: true,
-            timezone: true,
-            organization: {
-              select: {
-                id: true,
-                timezone: true,
-                status: true,
-                subscription: {
-                  select: {
-                    plan: true, // <-- your tier here
-                    status: true,
-                    currentPeriodEnd: true,
+        select: {
+          id: true,
+          platform: true,
+          platformId: true,
+          accessToken: true,
+          workspace: {
+            select: {
+              id: true,
+              timezone: true,
+              organization: {
+                select: {
+                  subscription: {
+                    select: {
+                      plan: true,
+                    },
                   },
                 },
               },
             },
           },
         },
-        socialConnectionId: true,
-      },
-    });
+      });
 
-    this.logger.log(`Found ${profiles.length} profiles to schedule.`);
-
-    let scheduledCount = 0;
-
-    for (const profile of profiles) {
-      // 2. APPLY PLAN LIMITS (The "Gatekeeper")
-      // Don't schedule expensive X (Twitter) fetches for Creator plans.
-      if (this.shouldSkipPlatform(profile.platform, profile.workspace.organization.subscription.plan.tier)) {
-        continue;
+      if (profiles.length === 0) {
+        hasMore = false;
+        break;
       }
 
-      // 3. ADD TO QUEUE
-      await this.analyticsQueue.add(
-        'fetch-stats',
-        { socialProfileId: profile.id },
-        {
-          // Retry Strategy: Exponential backoff handles transient API failures (429/500)
-          attempts: 3,
-          backoff: {
-            type: 'exponential',
-            delay: 5000, // 5s, 10s, 20s...
-          },
-          // Important: Keep job ID unique per day to prevent duplicate scheduling
-          // if Cron runs twice by accident or server restarts.
-          jobId: `analytics-${profile.id}-${new Date().toISOString().split('T')[0]}`,
+      if (profiles.length === 0) {
+        hasMore = false;
+        break;
+      }
 
-          // Optional: Spread jobs out over the next hour to prevent API spikes
-          // delay: Math.floor(Math.random() * 3600000)
-        },
-      );
+      // 2. Process Batch
+      const jobs = [];
+      for (const profile of profiles) {
+        const planTier = profile.workspace.organization.subscription.plan.tier; // Adjust path as needed
 
-      scheduledCount++;
+        if (!this.shouldSkipPlatform(profile.platform, planTier)) {
+          jobs.push({
+            name: 'fetch-stats',
+            data: { socialProfileId: profile.id },
+            opts: {
+              jobId: `analytics-${profile.id}-${new Date().toISOString().split('T')[0]}`,
+              attempts: 3,
+              backoff: { type: 'exponential', delay: 5000 },
+              removeOnComplete: true, // Keep Redis clean
+            },
+          });
+        }
+      }
+
+      // 3. Bulk Add to Queue (Much faster than awaiting one by one)
+      if (jobs.length > 0) {
+        await this.analyticsQueue.addBulk(jobs);
+        totalScheduled += jobs.length;
+      }
+
+      // 4. Update Cursor
+      cursor = profiles[profiles.length - 1].id;
+
+      // Safety break for empty batch
+      if (profiles.length < this.BATCH_SIZE) {
+        hasMore = false;
+      }
     }
 
-    this.logger.log(`✅ Scheduled ${scheduledCount} analytics jobs.`);
+    this.logger.log(`✅ Finished scheduling. Total jobs: ${totalScheduled}`);
   }
-
   /**
    * Helper: Check if this plan allows this platform
    */

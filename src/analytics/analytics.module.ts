@@ -9,9 +9,16 @@ import { InstagramAnalyticsProvider } from './providers/instagram-analytics.prov
 import { HttpModule } from '@nestjs/axios';
 import { AnalyticsNormalizerService } from './services/analytics-normalizer.service';
 import { AnalyticsRepository } from './services/analytics.repository';
+import { AnalyticsScheduler } from './scheduler/analytics.scheduler';
+import { BullModule } from '@nestjs/bullmq';
 
 @Module({
-  imports: [HttpModule],
+  imports: [
+    HttpModule,
+    BullModule.registerQueue({
+      name: 'analytics-queue',
+    }),
+  ],
   controllers: [AnalyticsController],
   providers: [
     AnalyticsService,
@@ -23,7 +30,8 @@ import { AnalyticsRepository } from './services/analytics.repository';
     AnalyticsService,
     AnalyticsNormalizerService,
     AnalyticsRepository,
+    AnalyticsScheduler,
   ],
-  exports: [AnalyticsService, AnalyticsNormalizerService, AnalyticsRepository],
+  exports: [AnalyticsService, AnalyticsNormalizerService, AnalyticsRepository, BullModule],
 })
 export class AnalyticsModule {}

@@ -5,7 +5,7 @@ import { AnalyticsService } from '@/analytics/services/analytics.service';
 import { EncryptionService } from '@/common/utility/encryption.service';
 import { PrismaService } from '@/prisma/prisma.service';
 import { Platform } from '@generated/enums';
-import { Processor, WorkerHost } from '@nestjs/bullmq';
+import { OnWorkerEvent, Processor, WorkerHost } from '@nestjs/bullmq';
 import { Logger } from '@nestjs/common';
 import { Job } from 'bullmq';
 
@@ -33,6 +33,20 @@ export class AnalyticsProcessor extends WorkerHost  {
       default:
         this.logger.warn(`Unknown job name: ${job.name}`);
     }
+  }
+
+  @OnWorkerEvent('failed')
+  onFailed(job: Job, error: Error) {
+    this.logger.error(
+      `❌ Analytics Job Failed [Profile: ${job.data.socialProfileId}]: ${error.message}`, 
+      error.stack
+    );
+  }
+
+  //  NEW: Track completed jobs (Optional, good for debugging volume)
+  @OnWorkerEvent('completed')
+  onCompleted(job: Job) {
+    this.logger.debug(`✅ Analytics Job Completed [Profile: ${job.data.socialProfileId}]`);
   }
 
   private async handleDailyFetch(job: Job<{ socialProfileId: string }>) {

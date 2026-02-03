@@ -93,7 +93,6 @@ export class SocialConnectionService {
       let decodedState = decodeURIComponent(state);
       if (decodedState.includes('%'))
         decodedState = decodeURIComponent(decodedState);
-
       try {
         const jsonString = Buffer.from(decodedState, 'base64').toString(
           'utf-8',
@@ -155,7 +154,10 @@ export class SocialConnectionService {
   /**
    * 3. GET IMPORTABLE PAGES
    */
-  async getImportablePages(connectionId: string): Promise<SocialPageOption[]> {
+  async getImportablePages(
+    connectionId: string,
+    includeTokens = false,
+  ): Promise<SocialPageOption[]> {
     const connection = await this.prisma.socialConnection.findUnique({
       where: { id: connectionId },
     });
@@ -171,20 +173,26 @@ export class SocialConnectionService {
       switch (connection.platform) {
         case 'FACEBOOK':
           pages = await this.facebook.getPages(accessToken);
+          break;
         case 'INSTAGRAM':
           pages = (await this.instagram.getAccount(
             accessToken,
           )) as SocialPageOption[];
+          break;
         case 'LINKEDIN':
           pages = await this.linkedin.getImportablePages(accessToken);
+          break;
         case 'TWITTER':
           const accessSecret = connection.refreshToken
             ? await this.encryptionService.decrypt(connection.refreshToken)
             : '';
           pages = await this.twitter.getProfile(accessToken, accessSecret);
-
+          break;
         default:
           pages = [];
+      }
+      if (includeTokens) {
+        return pages; // Return everything including tokens
       }
       return pages.map(({ accessToken, refreshToken, ...safe }) => safe);
     } catch (error) {

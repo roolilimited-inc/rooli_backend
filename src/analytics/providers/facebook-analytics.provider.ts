@@ -2,15 +2,24 @@ import { Injectable, Logger, BadRequestException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { firstValueFrom } from 'rxjs';
 import { HttpService } from '@nestjs/axios';
-import { AccountMetrics, AuthCredentials, IAnalyticsProvider, PostMetrics } from '../interfaces/analytics-provider.interface';
+import {
+  AccountMetrics,
+  AuthCredentials,
+  IAnalyticsProvider,
+  PostMetrics,
+} from '../interfaces/analytics-provider.interface';
+import { DateTime } from 'luxon';
 
 @Injectable()
 export class FacebookAnalyticsProvider implements IAnalyticsProvider {
   private readonly logger = new Logger(FacebookAnalyticsProvider.name);
-  private readonly baseUrl = 'https://graph.facebook.com/v22.0';
+  private readonly baseUrl = 'https://graph.facebook.com/v23.0';
   private readonly BATCH_LIMIT = 50;
 
-  constructor(private readonly config: ConfigService, private readonly httpService: HttpService) {}
+  constructor(
+    private readonly config: ConfigService,
+    private readonly httpService: HttpService,
+  ) {}
 
   /**
    * PAGE STATS
@@ -20,110 +29,187 @@ export class FacebookAnalyticsProvider implements IAnalyticsProvider {
     pageId: string,
     credentials: AuthCredentials,
   ): Promise<AccountMetrics> {
+    const token = credentials.accessToken;
+    const { fbSince, fbUntil } = this.getAnalyticsWindow();
+
     try {
-      const token = credentials.accessToken
-      // 1. Fetch Public Fields (Fan Count) & Insights (Impressions/Views)
-      // Note: 'page_impressions' and 'page_views_total' are usually 28-day aggregates or daily
-      const fields = 'fan_count,followers_count';
-      const insightsMetric = 'page_impressions,page_views_total';
+      // Parallel Fetching: Get Metadata & Daily Insights
+      const [pageRes, insightsRes, demographicsData] = await Promise.all([
+        // A. Metadata
+        firstValueFrom(
+          this.httpService.get(`${this.baseUrl}/${pageId}`, {
+            params: {
+              access_token: token,
+              fields: 'followers_count,fan_count',
+            },
+          }),
+        ),
+        // B. Daily Stats
+        firstValueFrom(
+          this.httpService.get(`${this.baseUrl}/${pageId}/insights`, {
+            params: {
+              access_token: token,
+              metric:
+                'page_media_view,page_impressions_unique,page_post_engagements,page_total_actions',
+              period: 'day',
+              fbSince,
+              fbUntil,
+            },
+          }),
+        ),
+        // C. Demographics (Helper function)
+        this.getDemographics(pageId, token),
+      ]);
 
-      const url = `${this.baseUrl}/${pageId}`;
-     const { data } = await firstValueFrom(
-        this.httpService.get(url, {
-          params: {
-            access_token: token,
-            fields: `${fields},insights.metric(${insightsMetric}).period(day).limit(1)`,
-          },
-        })
-      );
+      // Process Daily Insights
+      const insights = insightsRes.data?.data ?? [];
 
-      const insights = data.insights?.data || [];
-
-      // Helper to find metric value
-      const getMetric = (name: string) =>
-        insights.find((i: any) => i.name === name)?.values?.[0]?.value || 0;
+      const getVal = (name: string) =>
+        insights.find((m: any) => m.name === name)?.values?.[0]?.value ?? 0;
 
       return {
         platformId: pageId,
-        followersCount: data.followers_count || data.fan_count || 0,
-        impressionsCount: getMetric('page_impressions'),
-        profileViews: getMetric('page_views_total'),
         fetchedAt: new Date(),
+        followersCount:
+          pageRes.data.followers_count ?? pageRes.data.fan_count ?? 0,
+        impressionsCount: getVal('page_impressions'),
+        reach: getVal('page_impressions_unique'),
+        engagementCount: getVal('page_post_engagements'),
+        clicks: getVal('page_total_actions'),
+        demographics: demographicsData,
       };
-    } catch (error) {
-      this.handleError(error, 'Facebook Page Stats', pageId);
+    } catch (error: any) {
+      const msg = error.response?.data?.error?.message || error.message;
+      this.logger.error(`[Facebook Page Stats] Failed for ${pageId}: ${msg}`);
+      throw error;
     }
   }
 
-  /**
-   * POST STATS (BATCHED)
-   * Fetches public metrics (Likes/Comments) + Private Insights (Impressions/Reach)
-   * Limit: 50 IDs per batch
-   */
-  async getPostStats(postIds: string[], credentials: AuthCredentials): Promise<PostMetrics[]> {
-    const token = credentials.accessToken;
-  if (postIds.length === 0) return [];
+  async getPostStats(
+    postIds: string[],
+    credentials: AuthCredentials,
+  ): Promise<PostMetrics[]> {
+    if (postIds.length === 0) return [];
 
-  const chunks = this.chunkArray(postIds, this.BATCH_LIMIT);
-  
-  // Use Promise.all to run chunks in parallel
-  const results = await Promise.all(
-    chunks.map(async (chunk) => {
-      try {
-        const publicFields = 'id,shares,comments.summary(true).limit(0),reactions.summary(true).limit(0)';
-        const insightMetrics = 'post_impressions,post_impressions_unique,post_clicks';
+    // Batching in chunks of 50
+    const chunks = this.chunkArray(postIds, 50);
 
-        const url = `${this.baseUrl}/`;
+    const results = await Promise.all(
+      chunks.map(async (chunk) => {
+        try {
+          // 1. Request Summaries with limit(0) to save data
+          const publicFields =
+            'id,shares,comments.summary(true).limit(0),reactions.summary(true).limit(0)';
 
-        const { data } = await firstValueFrom(
-          this.httpService.get(url, {
-            params: {
-              access_token: token,
-              ids: chunk.join(','), // FIX: Use 'chunk', not 'postIds'
-              fields: `${publicFields},insights.metric(${insightMetrics})`,
-            },
-          }),
-        );
+          const insightMetrics =
+            'post_media_view,post_impressions_unique,post_clicks';
 
-        // Normalize each post in this chunk
-        return Object.values(data).map((post: any) => this.mapPostData(post));
-      } catch (error) {
-        this.logger.error(`Facebook Batch Fetch failed for chunk: ${error.message}`);
-        return []; // Return empty array so .flat() handles it gracefully
-      }
-    }),
-  );
+          const url = `${this.baseUrl}/`;
 
-  return results.flat();
-}
+          const { data } = await firstValueFrom(
+            this.httpService.get(url, {
+              params: {
+                access_token: credentials.accessToken,
+                ids: chunk.join(','),
+                fields: `${publicFields},insights.metric(${insightMetrics})`,
+              },
+            }),
+          );
 
-  private handleError(error: any, context: string, id: string) {
-    this.logger.error(
-      `[${context}] Failed for ${id}: ${error.response?.data?.error?.message || error.message}`,
+          // Map the data correctly
+          return Object.values(data).map((post: any) => this.mapPostData(post));
+        } catch (error) {
+          this.logger.error(
+            `Facebook Batch Fetch failed for chunk: ${error.message}`,
+          );
+          return [];
+        }
+      }),
     );
-    throw error;
+
+    return results.flat();
   }
 
-  protected chunkArray<T>(array: T[], size: number): T[][] {
-  const chunks: T[][] = [];
-  for (let i = 0; i < array.length; i += size) {
-    chunks.push(array.slice(i, i + size));
+  /**
+   * Helper to fetch Demographics safely.
+   * Returns null if page has <100 followers (API Restriction).
+   */
+  private async getDemographics(pageId: string, token: string) {
+    try {
+      const res = await firstValueFrom(
+        this.httpService.get(`${this.baseUrl}/${pageId}/insights`, {
+          params: {
+            access_token: token,
+            metric:
+              'page_fans,page_fans_city,page_fans_gender_age,page_fans_country',
+            period: 'lifetime', // Demographics are always "Lifetime" current state
+          },
+        }),
+      );
+      // Return the 'data' array directly, or clean it up if you want
+      return res.data?.data || null;
+    } catch (e) {
+      // ⚠️ Silence this specific error.
+      // If a page is too small, Facebook returns a 400 error for demographics.
+      // We don't want to fail the whole job just because they are small.
+      return null;
+    }
   }
-  return chunks;
-}
 
-private mapPostData(post: any): PostMetrics {
+  private mapPostData(post: any): PostMetrics {
     const insights = post.insights?.data || [];
-    const getInsight = (name: string) => insights.find((i: any) => i.name === name)?.values?.[0]?.value || 0;
-
+    const getInsight = (name: string) =>
+      insights.find((i: any) => i.name === name)?.values?.[0]?.value || 0;
     return {
       postId: post.id,
-      impressions: getInsight('post_impressions'),
+      impressions: getInsight('post_media_view'),
       reach: getInsight('post_impressions_unique'),
+      clicks: getInsight('post_clicks'),
       likes: post.reactions?.summary?.total_count || 0,
       comments: post.comments?.summary?.total_count || 0,
       shares: post.shares?.count || 0,
-      clicks: getInsight('post_clicks'),
+    };
+  }
+
+  protected chunkArray<T>(array: T[], size: number): T[][] {
+    const chunks: T[][] = [];
+    for (let i = 0; i < array.length; i += size) {
+      chunks.push(array.slice(i, i + size));
+    }
+    return chunks;
+  }
+
+  getAnalyticsWindow() {
+    // 1. Get "Now" in UTC and snap to the start of today (Midnight 00:00:00)
+    const today = DateTime.utc().startOf('day');
+
+    // 2. Calculate previous days
+    const yesterday = today.minus({ days: 1 });
+    const twoDaysAgo = today.minus({ days: 2 });
+
+    return {
+      // ------------------------------------------
+      // FOR LINKEDIN (Needs Date Objects or Millis)
+      // ------------------------------------------
+      // Strict Window: 00:00 yesterday -> 00:00 today
+      period: {
+        from: yesterday.toJSDate(),
+        to: today.toJSDate(),
+      },
+
+      // Safety Window (48h): Useful if APIs lag
+      safetyPeriod: {
+        from: twoDaysAgo.toJSDate(),
+        to: today.toJSDate(),
+      },
+
+      // ------------------------------------------
+      // FOR FACEBOOK / INSTAGRAM (Needs Unix Seconds)
+      // ------------------------------------------
+      // FB "Since": 2 days ago (Safety buffer)
+      fbSince: twoDaysAgo.toUnixInteger(),
+      // FB "Until": Midnight today
+      fbUntil: today.toUnixInteger(),
     };
   }
 }

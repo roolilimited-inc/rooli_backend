@@ -30,7 +30,8 @@ export class FacebookService {
   'pages_manage_posts',    // For FB Posting
   'pages_manage_engagement', // For FB Comments/DMs
   'pages_read_user_content', // For FB Inbox (Incoming posts)
-  'publish_video',           // Keep only if posting Videos to FB  
+  'publish_video', 
+  'read_insights',          // Keep only if posting Videos to FB  
   // Instagram
   'instagram_basic',
   'instagram_content_publish', // For IG Posting
@@ -64,6 +65,7 @@ export class FacebookService {
           },
         }),
       );
+
 
       const finalToken = tokenData.access_token;
       // Calculate expiry (usually 60 days from now)
@@ -105,6 +107,7 @@ export class FacebookService {
           },
         }),
       );
+
 
       const options: SocialPageOption[] = [];
 

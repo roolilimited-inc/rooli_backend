@@ -1,8 +1,10 @@
 import { Prisma } from '@generated/client';
 import { Injectable, Logger } from '@nestjs/common';
-import { AccountMetrics, PostMetrics } from '../interfaces/analytics-provider.interface';
+import {
+  AccountMetrics,
+  PostMetrics,
+} from '../interfaces/analytics-provider.interface';
 import { AnalyticsRepository } from './analytics.repository';
-
 
 @Injectable()
 export class AnalyticsNormalizerService {
@@ -15,42 +17,33 @@ export class AnalyticsNormalizerService {
    * Prepares the payload for the 'AccountAnalytics' table.
    */
   async normalizeAccountStats(
-    internalSocialProfileId: string, // The UUID from your DB
+    internalSocialProfileId: string,
     rawData: AccountMetrics,
   ): Promise<Prisma.AccountAnalyticsUncheckedCreateInput> {
-    
-    // 1. Get the LAST snapshot to compare against
-    const previousSnapshot = await this.analyticsRepository.getLastAccountSnapshot(internalSocialProfileId);
+    // Get the LAST snapshot to compare against
+    const previousSnapshot =
+      await this.analyticsRepository.getLastAccountSnapshot(
+        internalSocialProfileId,
+      );
 
-    // 2. Calculate Growth
+    // Calculate Growth
     const growth = this.calculateDelta(
-      rawData.followersCount, 
-      previousSnapshot?.followersTotal
+      rawData.followersCount,
+      previousSnapshot?.followersTotal,
     );
 
-    // 3. Return DB Object
+    // Return DB Object
     return {
       socialProfileId: internalSocialProfileId,
-      date: new Date(), // Today
-      
-      // -- Growth Metrics --
+      date: new Date(),
       followersTotal: rawData.followersCount,
       followersGained: growth.gained,
       followersLost: growth.lost,
-
-      // -- Reach Metrics --
+      reach: rawData.reach,
+      engagementCount: rawData.engagementCount || 0,
+      clicks: rawData.clicks || 0,
+      demographics: rawData.demographics || Prisma.DbNull,
       impressions: rawData.impressionsCount || 0,
-      profileViews: rawData.profileViews || 0,
-      
-      // Note: "Reach" (Unique People) is often hard to get at Account Level daily.
-      // Default to 0 if API returns undefined.
-      reach: 0, 
-      websiteClicks: 0, 
-
-      // -- Engagement --
-      // Summing up engagement is usually done via Post Aggregation, 
-      // but if the API gives a total "Interactions" count, use it here.
-      engagementCount: 0, 
     };
   }
 
@@ -64,7 +57,6 @@ export class AnalyticsNormalizerService {
     internalPostDestinationId: string, // The UUID of the post in your DB
     rawData: PostMetrics,
   ): Prisma.PostAnalyticsSnapshotUncheckedCreateInput {
-    
     return {
       postDestinationId: internalPostDestinationId,
       day: new Date(), // Today
@@ -74,11 +66,11 @@ export class AnalyticsNormalizerService {
       comments: rawData.comments,
       shares: rawData.shares,
       impressions: rawData.impressions,
-      
+
       // -- Advanced Metrics --
       reach: rawData.reach || 0,
       clicks: rawData.clicks || 0,
-      saves: rawData.saves || 0,       // Mapped from IG 'saved' / X 'bookmarks'
+      saves: rawData.saves || 0, // Mapped from IG 'saved' / X 'bookmarks'
       videoViews: rawData.videoViews || 0,
 
       // -- Debugging --

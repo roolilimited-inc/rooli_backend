@@ -100,7 +100,7 @@ export class AnalyticsRepository {
         followersGained: true,
         engagementCount: true,
         profileViews: true,
-        websiteClicks: true,
+        clicks: true,
       },
       // Get the follower count from the MOST RECENT day in the range
       _max: {

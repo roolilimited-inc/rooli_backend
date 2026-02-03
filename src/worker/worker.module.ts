@@ -18,10 +18,10 @@ import { AnalyticsModule } from '@/analytics/analytics.module';
    BullModule.registerQueue(
       { name: 'media-ingest' },
       { name: 'publishing-queue' },
-      { name: 'analytics-queue' }
     ),
     PostMediaModule,
     SocialModule,
+    AnalyticsModule,
     AnalyticsModule,
   ],
   controllers: [WorkerController],

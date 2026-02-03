@@ -865,15 +865,17 @@ model AccountAnalytics {
   impressions   Int @default(0) // Total views of all content + profile
   reach         Int @default(0) // Unique people
   profileViews  Int @default(0)
-  websiteClicks Int @default(0)
+  clicks          Int      @default(0) 
+
+  // Engagement Breakdown
+  reactions   Int @default(0)
+  comments    Int @default(0)
+  shares      Int @default(0)
 
   // Engagement (Aggregate)
   engagementCount Int @default(0) // Sum of all interactions that day
 
-  // Relations
-  // socialAccount SocialAccount? @relation(fields: [socialAccountId], references: [id])
-  // pageAccount   PageAccount?   @relation(fields: [pageAccountId], references: [id])
-
+  demographics    Json?
   createdAt DateTime @default(now())
   updatedAt DateTime @default(now()) @updatedAt
 
