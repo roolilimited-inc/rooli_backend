@@ -408,6 +408,8 @@ model PostDestination {
 
   @@unique([postId, socialProfileId])
   @@index([status])
+  @@index([socialProfileId, createdAt])
+  @@index([socialProfileId, status, createdAt])
 }
 
 // 🖼️ Explicit Join for Media Ordering
@@ -838,6 +840,7 @@ model PostAnalyticsSnapshot {
 
   saves      Int @default(0) // Bookmarks (X), Saves (IG)
   videoViews Int @default(0) // 3-second views (FB/IG)
+  engagementCount Int @default(0)
 
   postDestination PostDestination @relation(fields: [postDestinationId], references: [id], onDelete: Cascade)
 
